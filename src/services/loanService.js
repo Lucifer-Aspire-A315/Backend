@@ -158,14 +158,13 @@ class LoanService {
 
       const loans = await prisma.loan.findMany({
         where: whereClause,
-        include: {
-          type: true,
-          applicant: {
-            select: { id: true, name: true, email: true, role: true },
-          },
-          merchant: {
-            select: { id: true, name: true, email: true },
-          },
+        select: {
+          id: true,
+          type: { select: { id: true, name: true } },
+          amount: true,
+          status: true,
+          createdAt: true,
+          applicant: { select: { id: true, name: true, role: true } },
         },
         orderBy: { createdAt: 'desc' },
         take: filters.limit || 20,
@@ -199,36 +198,26 @@ class LoanService {
       }
 
       // Update loan
-      const loan = await prisma.loan.update({
+      const loan = await prisma.loan.findUnique({
         where: { id: loanId },
-        data: {
-          status,
-          bankerId: userId,
-          updatedAt: new Date(),
-        },
         select: {
           id: true,
-          type: true,
+          type: { select: { id: true, name: true, description: true } },
           amount: true,
           status: true,
-          applicantId: true,
-          merchantId: true,
-          bankerId: true,
+          createdAt: true,
           updatedAt: true,
+          applicant: { select: { id: true, name: true, email: true, role: true } },
+          merchant: { select: { id: true, name: true, email: true } },
+          merchantId: true,
+          applicantId: true,
+          auditLogs: {
+            orderBy: { createdAt: 'desc' },
+            take: 5,
+            select: { action: true, createdAt: true, actorId: true },
+          },
         },
       });
-
-      // Create audit log
-      const action = status === 'APPROVED' ? 'LOAN_APPROVED' : 'LOAN_REJECTED';
-      await this.createAuditLog(loanId, action, userId, notes);
-
-      logger.info('Loan Status Updated', { 
-        loanId, 
-        newStatus: status, 
-        bankerId: userId, 
-        notes: notes.substring(0, 100) 
-      });
-
       return loan;
     } catch (error) {
       logger.error('Update Loan Status Failed', { 

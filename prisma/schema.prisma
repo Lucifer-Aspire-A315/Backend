@@ -1,3 +1,10 @@
+model Bank {
+  id        String      @id @default(uuid())
+  name      String      @unique
+  loanTypes LoanType[]  @relation("BankLoanTypes")
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
 
 // RN Fintech - Prisma Schema (Draft)
 // Database: PostgreSQL
@@ -28,8 +35,29 @@ model User {
   updatedAt     DateTime @updatedAt
   merchantProfile MerchantProfile?
   customerProfile CustomerProfile?
+  bankerProfile   BankerProfile?
   documents        Document[]
   updatedLoanStatuses LoanStatusHistory[] @relation("UserUpdatedLoanStatuses")
+}
+
+model BankerProfile {
+  userId        String   @id
+  user          User     @relation(fields: [userId], references: [id])
+  bankName      String
+  loanTypes     String[]
+  branchPincode String
+  branchAddress String?
+  ifscCode      String?
+  designation   String?
+  status        BankerStatus @default(PENDING)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+enum BankerStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
 }
 
 model Loan {
@@ -52,12 +80,13 @@ model Loan {
 }
 
 model LoanType {
-  id          String   @id @default(uuid())
-  name        String   @unique
+  id          String    @id @default(uuid())
+  name        String    @unique
   description String?
   loans       Loan[]
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  banks       Bank[]    @relation("BankLoanTypes")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
 
 model LoanStatusHistory {
@@ -142,6 +171,7 @@ enum Role {
   CUSTOMER
   MERCHANT
   BANKER
+  ADMIN
 }
 
 enum LoanStatus {

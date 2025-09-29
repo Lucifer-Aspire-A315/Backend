@@ -52,6 +52,8 @@ app.use('/api/v1/health', healthRoutes);
 app.use('/api/v1/auth', authRoutes); // ✅ New auth routes
 app.use('/api/v1/loan', loanRoutes);
 app.use('/api/v1/loan-types', require('./routes/loanType'));
+app.use('/api/v1/banks', require('./routes/bank'));
+app.use('/api/v1/admin/banks', require('./routes/bankAdmin'));
 app.use('/api/v1/kyc', kycRoutes);
 
 // Catch-all 404 for /api/v1 routes

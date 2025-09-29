@@ -5,11 +5,11 @@ class LoanTypeController {
   // POST /api/v1/loan-types
   static async create(req, res, next) {
     try {
-      const { name, description } = req.body;
+      const { name, description, bankIds } = req.body;
       if (!name) {
         return res.status(400).json({ success: false, message: 'Name is required' });
       }
-      const loanType = await loanTypeService.createLoanType({ name, description });
+      const loanType = await loanTypeService.createLoanType({ name, description, bankIds });
       res.status(201).json({ success: true, data: loanType });
     } catch (error) {
       next(error);
@@ -44,8 +44,8 @@ class LoanTypeController {
   static async update(req, res, next) {
     try {
       const { id } = req.params;
-      const { name, description } = req.body;
-      const loanType = await loanTypeService.updateLoanType(id, { name, description });
+      const { name, description, bankIds } = req.body;
+      const loanType = await loanTypeService.updateLoanType(id, { name, description, bankIds });
       res.status(200).json({ success: true, data: loanType });
     } catch (error) {
       next(error);
