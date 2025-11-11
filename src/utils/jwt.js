@@ -18,17 +18,17 @@ class JWTUtil {
         expiresIn: process.env.JWT_EXPIRES_IN || '1h',
       });
 
-      logger.info('JWT Access Token Generated', { 
-        userId: user.id, 
-        role: user.role, 
-        expiresIn: process.env.JWT_EXPIRES_IN 
+      logger.info('JWT Access Token Generated', {
+        userId: user.id,
+        role: user.role,
+        expiresIn: process.env.JWT_EXPIRES_IN,
       });
 
       return token;
     } catch (error) {
-      logger.error('JWT Generation Failed', { 
-        userId: user.id, 
-        error: error.message 
+      logger.error('JWT Generation Failed', {
+        userId: user.id,
+        error: error.message,
       });
       throw error;
     }
@@ -43,7 +43,7 @@ class JWTUtil {
       return decoded;
     } catch (error) {
       logger.warn('JWT Verification Failed', { error: error.message });
-      
+
       const jwtError = new Error('Invalid or expired token');
       jwtError.status = 401;
       throw jwtError;

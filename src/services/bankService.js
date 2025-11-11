@@ -1,10 +1,13 @@
+const prisma = require('../lib/prisma');
+
 exports.createBank = async ({ name, loanTypeIds }) => {
   return prisma.bank.create({
     data: {
       name,
-      loanTypes: loanTypeIds && Array.isArray(loanTypeIds)
-        ? { connect: loanTypeIds.map(id => ({ id })) }
-        : undefined,
+      loanTypes:
+        loanTypeIds && Array.isArray(loanTypeIds)
+          ? { connect: loanTypeIds.map((id) => ({ id })) }
+          : undefined,
     },
     include: { loanTypes: { select: { id: true, name: true } } },
   });
@@ -15,9 +18,10 @@ exports.updateBank = async (id, { name, loanTypeIds }) => {
     where: { id },
     data: {
       name,
-      loanTypes: loanTypeIds && Array.isArray(loanTypeIds)
-        ? { set: loanTypeIds.map(id => ({ id })) }
-        : undefined,
+      loanTypes:
+        loanTypeIds && Array.isArray(loanTypeIds)
+          ? { set: loanTypeIds.map((id) => ({ id })) }
+          : undefined,
     },
     include: { loanTypes: { select: { id: true, name: true } } },
   });
@@ -27,8 +31,6 @@ exports.deleteBank = async (id) => {
   return prisma.bank.delete({ where: { id } });
 };
 // src/services/bankService.js
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
 
 exports.getBanks = async ({ loanTypeId }) => {
   const select = { id: true, name: true };

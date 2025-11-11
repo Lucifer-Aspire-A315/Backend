@@ -2,6 +2,7 @@ model Bank {
   id        String      @id @default(uuid())
   name      String      @unique
   loanTypes LoanType[]  @relation("BankLoanTypes")
+  bankers   BankerProfile[]
   createdAt DateTime    @default(now())
   updatedAt DateTime    @updatedAt
 }
@@ -31,6 +32,11 @@ model User {
   bankerLoans   Loan[]   @relation("BankerLoans")
   kycDocs       KYCDocument[]
   notifications Notification[]
+  isEmailVerified Boolean @default(false)
+  emailVerificationToken String?
+  emailVerificationTokenExpires DateTime?
+  passwordResetToken String?
+  passwordResetTokenExpires DateTime?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   merchantProfile MerchantProfile?
@@ -43,12 +49,11 @@ model User {
 model BankerProfile {
   userId        String   @id
   user          User     @relation(fields: [userId], references: [id])
-  bankName      String
-  loanTypes     String[]
-  branchPincode String
-  branchAddress String?
-  ifscCode      String?
-  designation   String?
+  bankId        String
+  bank          Bank     @relation(fields: [bankId], references: [id])
+  branch        String
+  pincode       String
+  employeeId    String?
   status        BankerStatus @default(PENDING)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -62,27 +67,37 @@ enum BankerStatus {
 
 model Loan {
   id          String   @id @default(uuid())
-  typeId      String
-  type        LoanType @relation(fields: [typeId], references: [id])
-  amount      Float
-  status      LoanStatus @default(PENDING)
-  applicant   User     @relation(fields: [applicantId], references: [id])
-  applicantId String
-  merchant    User?    @relation("MerchantLoans", fields: [merchantId], references: [id])
-  merchantId  String?
-  banker      User?    @relation("BankerLoans", fields: [bankerId], references: [id])
-  bankerId    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  auditLogs   AuditLog[]
+  loanTypeId   String?
+  loanType     LoanType? @relation(fields: [loanTypeId], references: [id])
+  amount       Decimal  @db.Decimal(18,2)
+  tenorMonths  Int?
+  interestRate Decimal? @db.Decimal(5,2)
+  status       LoanStatus @default(SUBMITTED)
+  kycStatus    KYCStatus  @default(PENDING)
+  metadata     Json       @default("{}")
+  applicant    User     @relation(fields: [applicantId], references: [id])
+  applicantId  String
+  merchant     User?    @relation("MerchantLoans", fields: [merchantId], references: [id])
+  merchantId   String?
+  banker       User?    @relation("BankerLoans", fields: [bankerId], references: [id])
+  bankerId     String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  auditLogs    AuditLog[]
   statusHistory LoanStatusHistory[]
   documents      Document[]
+
+  @@index([merchantId])
+  @@index([applicantId])
+  @@index([status])
 }
 
 model LoanType {
   id          String    @id @default(uuid())
   name        String    @unique
+  code        String?   @unique
   description String?
+  schema      Json      @default("{}")
   loans       Loan[]
   banks       Bank[]    @relation("BankLoanTypes")
   createdAt   DateTime  @default(now())
@@ -107,6 +122,7 @@ model MerchantProfile {
   businessName String
   gstNumber String?
   address   String?
+  pincode   String?
   customers CustomerProfile[]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -119,6 +135,7 @@ model CustomerProfile {
   merchant  MerchantProfile? @relation(fields: [merchantId], references: [id])
   merchantId String?
   address   String?
+  pincode   String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -130,7 +147,13 @@ model Document {
   loan      Loan?    @relation(fields: [loanId], references: [id])
   loanId    String?
   type      String
-  url       String
+  publicId  String?
+  secureUrl String?
+  url       String?
+  filename  String?
+  fileType  String?
+  bytes     Int?
+  uploaderId String?
   status    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -146,6 +169,7 @@ model KYCDocument {
   verifiedBy String?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  auditLogs KYCAuditLog[]
 }
 
 model Notification {
@@ -167,6 +191,16 @@ model AuditLog {
   createdAt DateTime @default(now())
 }
 
+model KYCAuditLog {
+  id        String      @id @default(uuid())
+  kycDoc    KYCDocument @relation(fields: [kycDocId], references: [id])
+  kycDocId  String
+  action    String
+  actorId   String?
+  details   String?
+  createdAt DateTime    @default(now())
+}
+
 enum Role {
   CUSTOMER
   MERCHANT
@@ -175,10 +209,13 @@ enum Role {
 }
 
 enum LoanStatus {
-  PENDING
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
   APPROVED
   REJECTED
   DISBURSED
+  CANCELLED
 }
 
 enum KYCStatus {

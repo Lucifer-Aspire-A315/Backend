@@ -1,0 +1,7 @@
+node_modules/
+logs/
+src/logs/
+postman/
+prisma/migrations/
+dist/
+*.log

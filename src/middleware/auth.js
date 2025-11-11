@@ -13,17 +13,17 @@ const authMiddleware = {
 
       // Attach user to request
       req.user = decoded;
-      
-      logger.info('Token Verified', { 
-        userId: decoded.userId, 
-        role: decoded.role 
+
+      logger.info('Token Verified', {
+        userId: decoded.userId,
+        role: decoded.role,
       });
 
       next();
     } catch (error) {
-      logger.warn('Authentication Failed', { 
-        path: req.originalUrl, 
-        ip: req.ip 
+      logger.warn('Authentication Failed', {
+        path: req.originalUrl,
+        ip: req.ip,
       });
       next(error);
     }
@@ -43,11 +43,11 @@ const authMiddleware = {
       if (roles.length && !roles.includes(req.user.role)) {
         const error = new Error('Insufficient permissions');
         error.status = 403;
-        logger.warn('Access Denied', { 
-          userId: req.user.userId, 
-          role: req.user.role, 
+        logger.warn('Access Denied', {
+          userId: req.user.userId,
+          role: req.user.role,
           requiredRoles: roles,
-          path: req.originalUrl 
+          path: req.originalUrl,
         });
         return next(error);
       }

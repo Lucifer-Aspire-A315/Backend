@@ -1,21 +1,28 @@
 const express = require('express');
 const loanController = require('../controllers/loanController');
+const { authenticate, authorize } = require('../middleware/auth');
+
 const router = express.Router();
 
-// Apply loan (Customer or Merchant) - POST /api/v1/loan/apply
-router.post('/apply', loanController.apply);
+// All routes require authentication
+router.use(authenticate);
 
-// Get loan status (Customer/Merchant/Banker) - GET /api/v1/loan/:id/status
-router.get('/:id/status', loanController.getStatus);
+// Apply for loan (MERCHANT only)
+router.post('/apply', authorize(['MERCHANT']), loanController.applyForLoan);
 
-// List user's loans - GET /api/v1/loan/list
-router.get('/list', loanController.listLoans);
+// Get single loan
+router.get('/:id', loanController.getLoan);
 
-// Banker actions
-router.post('/:id/approve', loanController.approve);
-router.post('/:id/reject', loanController.reject);
+// List loans
+router.get('/', loanController.listLoans);
 
-// Merchant analytics - GET /api/v1/loan/analytics/merchant
-router.get('/analytics/merchant', loanController.merchantAnalytics);
+// Assign banker (BANKER/ADMIN only)
+router.post('/:id/assign', authorize(['BANKER', 'ADMIN']), loanController.assignBanker);
+
+// Approve loan (BANKER only)
+router.post('/:id/approve', authorize(['BANKER']), loanController.approveLoan);
+
+// Reject loan (BANKER only)
+router.post('/:id/reject', authorize(['BANKER']), loanController.rejectLoan);
 
 module.exports = router;

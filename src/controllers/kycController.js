@@ -1,5 +1,4 @@
 const kycService = require('../services/kycService');
-const userService = require('../services/userService');
 const authMiddleware = require('../middleware/auth');
 const { validationSchemas, validateKYC } = require('../utils/validation');
 const { logger } = require('../middleware/logger');
@@ -21,7 +20,7 @@ class KYCController {
       // Validate request
       const { docType } = validateKYC(validationSchemas.kycUploadUrl, req.body);
 
-      const uploadData = await kycService.generateUploadUrl(req.user.userId, docType);
+  const uploadData = await kycService.generateUploadUrl(req.user.userId, docType);
 
       const response = {
         success: true,
@@ -29,13 +28,43 @@ class KYCController {
         data: uploadData,
       };
 
-      logger.info('KYC Upload Signature Generated', { 
-        userId: req.user.userId, 
-        docType, 
-        kycDocId: uploadData.kycDocId 
+      logger.info('KYC Upload Signature Generated', {
+        userId: req.user.userId,
+        docType,
+        kycDocId: uploadData.kycDocId,
       });
 
       res.status(200).json(response);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/kyc/on-behalf/upload-url
+   * Generate Cloudinary signature to upload on behalf of a target user
+   */
+  static async generateUploadUrlOnBehalf(req, res, next) {
+    try {
+      if (!['MERCHANT', 'BANKER', 'ADMIN'].includes(req.user.role)) {
+        const error = new Error('Not authorized to upload on behalf');
+        error.status = 403;
+        return next(error);
+      }
+
+      const { targetUserId, docType } = validateKYC(
+        validationSchemas.kycOnBehalfUploadUrl,
+        req.body,
+      );
+
+      const uploadData = await kycService.generateUploadUrlOnBehalf(
+        req.user.userId,
+        req.user.role,
+        targetUserId,
+        docType,
+      );
+
+      res.status(200).json({ success: true, message: 'Upload signature generated', data: uploadData });
     } catch (error) {
       next(error);
     }
@@ -54,14 +83,12 @@ class KYCController {
         return next(error);
       }
 
-      const { kycDocId, publicId, fileSize, contentType } = validateKYC(validationSchemas.kycCompleteUpload, req.body);
-
-      const kycDoc = await kycService.completeUpload(
-        kycDocId, 
-        publicId, 
-        fileSize, 
-        contentType
+      const { kycDocId, publicId, fileSize, contentType } = validateKYC(
+        validationSchemas.kycCompleteUpload,
+        req.body,
       );
+
+      const kycDoc = await kycService.completeUpload(kycDocId, publicId, fileSize, contentType);
 
       const response = {
         success: true,
@@ -71,16 +98,16 @@ class KYCController {
           nextSteps: [
             'Document submitted for verification',
             'Banker review typically takes 1-2 business days',
-            'You will receive notification when verified'
+            'You will receive notification when verified',
           ],
         },
       };
 
-      logger.info('KYC Upload Completed', { 
-        userId: req.user.userId, 
-        kycDocId, 
-        publicId, 
-        fileSize 
+      logger.info('KYC Upload Completed', {
+        userId: req.user.userId,
+        kycDocId,
+        publicId,
+        fileSize,
       });
 
       res.status(200).json(response);
@@ -90,47 +117,76 @@ class KYCController {
   }
 
   /**
- * GET /api/v1/kyc/status
- * Get user's KYC document status
- */
-static async getStatus(req, res, next) {
-  try {
-    const { status } = req.query; // Optional filter: PENDING, VERIFIED, REJECTED
+   * POST /api/v1/kyc/on-behalf/complete-upload
+   * Complete KYC upload on behalf (MERCHANT for their customers, BANKER/ADMIN for any)
+   */
+  static async completeUploadOnBehalf(req, res, next) {
+    try {
+      if (!['MERCHANT', 'BANKER', 'ADMIN'].includes(req.user.role)) {
+        const error = new Error('Not authorized to complete upload on behalf');
+        error.status = 403;
+        return next(error);
+      }
 
-    const documents = await kycService.getUserKYCDocuments(
-      req.user.userId, 
-      status
-    );
+      const { kycDocId, publicId, fileSize, contentType } = validateKYC(
+        validationSchemas.kycCompleteUpload,
+        req.body,
+      );
 
-    // Get required documents for this user
-    const requiredDocs = kycService.getRequiredDocuments(req.user.role);
+      const kycDoc = await kycService.completeUploadOnBehalf(
+        req.user.userId,
+        req.user.role,
+        kycDocId,
+        publicId,
+        fileSize,
+        contentType,
+      );
 
-    // Check completion status
-    const completionStatus = KYCController.calculateKYCCompletion(documents, requiredDocs); // Use class name
-
-    const response = {
-      success: true,
-      message: `KYC status: ${completionStatus.status}`,
-      data: {
-        documents,
-        requiredDocuments: requiredDocs,
-        completion: completionStatus,
-        overallStatus: completionStatus.percentComplete === 100 ? 'COMPLETE' : 'INCOMPLETE',
-      },
-    };
-
-    logger.info('KYC Status Retrieved', { 
-      userId: req.user.userId, 
-      role: req.user.role,
-      complete: completionStatus.percentComplete,
-      pendingCount: documents.filter(d => d.isPending).length 
-    });
-
-    res.status(200).json(response);
-  } catch (error) {
-    next(error);
+      res.status(200).json({ success: true, message: 'KYC document uploaded successfully', data: { kycDoc } });
+    } catch (error) {
+      next(error);
+    }
   }
-}
+
+  /**
+   * GET /api/v1/kyc/status
+   * Get user's KYC document status
+   */
+  static async getStatus(req, res, next) {
+    try {
+      const { status } = req.query; // Optional filter: PENDING, VERIFIED, REJECTED
+
+      const documents = await kycService.getUserKYCDocuments(req.user.userId, status);
+
+      // Get required documents for this user
+      const requiredDocs = kycService.getRequiredDocuments(req.user.role);
+
+      // Check completion status
+      const completionStatus = KYCController.calculateKYCCompletion(documents, requiredDocs); // Use class name
+
+      const response = {
+        success: true,
+        message: `KYC status: ${completionStatus.status}`,
+        data: {
+          documents,
+          requiredDocuments: requiredDocs,
+          completion: completionStatus,
+          overallStatus: completionStatus.percentComplete === 100 ? 'COMPLETE' : 'INCOMPLETE',
+        },
+      };
+
+      logger.info('KYC Status Retrieved', {
+        userId: req.user.userId,
+        role: req.user.role,
+        complete: completionStatus.percentComplete,
+        pendingCount: documents.filter((d) => d.isPending).length,
+      });
+
+      res.status(200).json(response);
+    } catch (error) {
+      next(error);
+    }
+  }
 
   /**
    * POST /api/v1/kyc/verify
@@ -147,12 +203,7 @@ static async getStatus(req, res, next) {
       const { kycDocId } = req.params;
       const { status, notes } = validateKYC(validationSchemas.kycVerify, req.body);
 
-      const result = await kycService.verifyKYCDocument(
-        kycDocId, 
-        status, 
-        req.user.userId, 
-        notes
-      );
+      const result = await kycService.verifyKYCDocument(kycDocId, status, req.user.userId, notes);
 
       const response = {
         success: true,
@@ -166,11 +217,11 @@ static async getStatus(req, res, next) {
         },
       };
 
-      logger.info('KYC Document Verified', { 
-        kycDocId, 
-        status, 
-        bankerId: req.user.userId, 
-        notes: notes || 'No notes' 
+      logger.info('KYC Document Verified', {
+        kycDocId,
+        status,
+        bankerId: req.user.userId,
+        notes: notes || 'No notes',
       });
 
       res.status(200).json(response);
@@ -192,10 +243,7 @@ static async getStatus(req, res, next) {
       }
 
       const { limit = 20 } = req.query;
-      const documents = await kycService.getPendingKYCForReview(
-        req.user.userId, 
-        parseInt(limit)
-      );
+      const documents = await kycService.getPendingKYCForReview(req.user.userId, parseInt(limit));
 
       const response = {
         success: true,
@@ -207,9 +255,9 @@ static async getStatus(req, res, next) {
         },
       };
 
-      logger.info('Pending KYC Retrieved for Review', { 
-        bankerId: req.user.userId, 
-        count: documents.length 
+      logger.info('Pending KYC Retrieved for Review', {
+        bankerId: req.user.userId,
+        count: documents.length,
       });
 
       res.status(200).json(response);
@@ -239,10 +287,10 @@ static async getStatus(req, res, next) {
         data: document,
       };
 
-      logger.info('KYC Document Retrieved for Review', { 
-        kycDocId, 
-        bankerId: req.user.userId, 
-        userId: document.userId 
+      logger.info('KYC Document Retrieved for Review', {
+        kycDocId,
+        bankerId: req.user.userId,
+        userId: document.userId,
       });
 
       res.status(200).json(response);
@@ -272,11 +320,11 @@ static async getStatus(req, res, next) {
         },
       };
 
-      logger.info('Required KYC Retrieved', { 
-        userId: req.user.userId, 
+      logger.info('Required KYC Retrieved', {
+        userId: req.user.userId,
         role: req.user.role,
         loanType: loanType || 'general',
-        count: requiredDocs.length 
+        count: requiredDocs.length,
       });
 
       res.status(200).json(response);
@@ -289,19 +337,17 @@ static async getStatus(req, res, next) {
    * Calculate KYC completion status
    */
   static calculateKYCCompletion(documents, requiredDocs) {
-    const completedTypes = new Set(documents
-      .filter(doc => doc.status === 'VERIFIED')
-      .map(doc => doc.type)
+    const completedTypes = new Set(
+      documents.filter((doc) => doc.status === 'VERIFIED').map((doc) => doc.type),
     );
 
-    const pendingTypes = new Set(documents
-      .filter(doc => doc.status === 'PENDING')
-      .map(doc => doc.type)
+    const pendingTypes = new Set(
+      documents.filter((doc) => doc.status === 'PENDING').map((doc) => doc.type),
     );
 
     const totalRequired = requiredDocs.length;
-    const completed = requiredDocs.filter(doc => completedTypes.has(doc.type)).length;
-    const pending = requiredDocs.filter(doc => pendingTypes.has(doc.type)).length;
+    const completed = requiredDocs.filter((doc) => completedTypes.has(doc.type)).length;
+    const pending = requiredDocs.filter((doc) => pendingTypes.has(doc.type)).length;
     const incomplete = totalRequired - completed - pending;
 
     return {
@@ -309,9 +355,14 @@ static async getStatus(req, res, next) {
       completed,
       pending,
       incomplete,
-      status: totalRequired === 0 ? 'NOT_REQUIRED' :
-              completed === totalRequired ? 'COMPLETE' :
-              pending > 0 ? 'IN_PROGRESS' : 'INCOMPLETE',
+      status:
+        totalRequired === 0
+          ? 'NOT_REQUIRED'
+          : completed === totalRequired
+            ? 'COMPLETE'
+            : pending > 0
+              ? 'IN_PROGRESS'
+              : 'INCOMPLETE',
       needsAction: pending + incomplete > 0,
     };
   }
@@ -320,22 +371,28 @@ static async getStatus(req, res, next) {
 // Export controller methods with middleware
 module.exports = {
   generateUploadUrl: [authMiddleware.authenticate, KYCController.generateUploadUrl],
-  completeUpload: [authMiddleware.authenticate, KYCController.completeUpload],
-  getStatus: [authMiddleware.authenticate, KYCController.getStatus],
-  verify: [
-    authMiddleware.authenticate, 
-    authMiddleware.authorize(['BANKER']), 
-    KYCController.verify
+  generateUploadUrlOnBehalf: [
+    authMiddleware.authenticate,
+    authMiddleware.authorize(['MERCHANT', 'BANKER', 'ADMIN']),
+    KYCController.generateUploadUrlOnBehalf,
   ],
+  completeUpload: [authMiddleware.authenticate, KYCController.completeUpload],
+  completeUploadOnBehalf: [
+    authMiddleware.authenticate,
+    authMiddleware.authorize(['MERCHANT', 'BANKER', 'ADMIN']),
+    KYCController.completeUploadOnBehalf,
+  ],
+  getStatus: [authMiddleware.authenticate, KYCController.getStatus],
+  verify: [authMiddleware.authenticate, authMiddleware.authorize(['BANKER']), KYCController.verify],
   getPendingForReview: [
-    authMiddleware.authenticate, 
-    authMiddleware.authorize(['BANKER']), 
-    KYCController.getPendingForReview
+    authMiddleware.authenticate,
+    authMiddleware.authorize(['BANKER']),
+    KYCController.getPendingForReview,
   ],
   getForReview: [
-    authMiddleware.authenticate, 
-    authMiddleware.authorize(['BANKER']), 
-    KYCController.getForReview
+    authMiddleware.authenticate,
+    authMiddleware.authorize(['BANKER']),
+    KYCController.getForReview,
   ],
   getRequired: [authMiddleware.authenticate, KYCController.getRequired],
 };

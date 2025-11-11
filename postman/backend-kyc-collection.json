@@ -1,0 +1,105 @@
+{
+  "info": {
+    "name": "RN FinTech - KYC Reviewer",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Merchant Login",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{merchantEmail}}\",\n  \"password\": \"{{merchantPassword}}\"\n}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "pm.test('Merchant login success', function () { pm.response.to.have.status(200); pm.environment.set('jwt', res.data.token); pm.environment.set('merchantId', res.data.user.id); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "KYC: Generate Upload URL (PAN_CARD)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{jwt}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/kyc/upload-url", "host": ["{{baseUrl}}"], "path": ["kyc", "upload-url"] },
+        "body": { "mode": "raw", "raw": "{\n  \"docType\": \"PAN_CARD\"\n}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "pm.test('Upload URL generated', function () { pm.response.to.have.status(200); pm.expect(res.data.kycDocId).to.be.a('string'); });",
+              "pm.environment.set('kycDocId', res.data.kycDocId);",
+              "pm.environment.set('publicId', res.data.publicId);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "KYC: Complete Upload (PAN_CARD)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{jwt}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/kyc/complete-upload", "host": ["{{baseUrl}}"], "path": ["kyc", "complete-upload"] },
+        "body": { "mode": "raw", "raw": "{\n  \"kycDocId\": \"{{kycDocId}}\",\n  \"publicId\": \"{{publicId}}\",\n  \"fileSize\": 20480,\n  \"contentType\": \"application/pdf\"\n}" }
+      }
+    },
+    {
+      "name": "Banker Login",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/auth/login", "host": ["{{baseUrl}}"], "path": ["auth", "login"] },
+        "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{bankerEmail}}\",\n  \"password\": \"{{bankerPassword}}\"\n}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "pm.test('Banker login success', function () { pm.response.to.have.status(200); pm.environment.set('jwtBanker', res.data.token); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "KYC: Verify PAN_CARD",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{jwtBanker}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/kyc/{{kycDocId}}/verify", "host": ["{{baseUrl}}"], "path": ["kyc", "{{kycDocId}}", "verify"] },
+        "body": { "mode": "raw", "raw": "{\n  \"status\": \"VERIFIED\",\n  \"notes\": \"All good\"\n}" }
+      }
+    },
+    {
+      "name": "KYC: My Status",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{jwt}}" }],
+        "url": { "raw": "{{baseUrl}}/kyc/status", "host": ["{{baseUrl}}"], "path": ["kyc", "status"] }
+      }
+    }
+  ]
+}

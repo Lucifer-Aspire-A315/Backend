@@ -1,20 +1,21 @@
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const { logger } = require('../middleware/logger');
-
-const prisma = new PrismaClient();
 
 class LoanTypeService {
   /**
    * Create a new loan type
    */
-  async createLoanType({ name, description, bankIds }) {
+  async createLoanType({ name, code, description, schema, bankIds }) {
     try {
       const data = {
         name,
+        code: code || undefined,
         description,
-        banks: bankIds && Array.isArray(bankIds)
-          ? { connect: bankIds.map(id => ({ id })) }
-          : undefined,
+        schema: schema && typeof schema === 'object' ? schema : undefined,
+        banks:
+          bankIds && Array.isArray(bankIds)
+            ? { connect: bankIds.map((id) => ({ id })) }
+            : undefined,
       };
       const loanType = await prisma.loanType.create({
         data,
@@ -23,6 +24,11 @@ class LoanTypeService {
       logger.info('LoanType Created', { id: loanType.id, name: loanType.name });
       return loanType;
     } catch (error) {
+      if (error.code === 'P2002') {
+        const conflict = new Error('LoanType with the same unique field already exists');
+        conflict.status = 409;
+        throw conflict;
+      }
       logger.error('Create LoanType Failed', { error: error.message });
       throw error;
     }
@@ -48,9 +54,7 @@ class LoanTypeService {
    */
   async getLoanTypeById(id) {
     try {
-      const loanType = await prisma.loanType.findUnique({
-        where: { id },
-      });
+      const loanType = await prisma.loanType.findUnique({ where: { id }, include: { banks: true } });
       return loanType;
     } catch (error) {
       logger.error('Get LoanType By ID Failed', { id, error: error.message });
@@ -61,14 +65,15 @@ class LoanTypeService {
   /**
    * Update loan type
    */
-  async updateLoanType(id, { name, description, bankIds }) {
+  async updateLoanType(id, { name, code, description, schema, bankIds }) {
     try {
       const data = {
-        name,
-        description,
-        banks: bankIds && Array.isArray(bankIds)
-          ? { set: bankIds.map(id => ({ id })) }
-          : undefined,
+        ...(name !== undefined ? { name } : {}),
+        ...(code !== undefined ? { code } : {}),
+        ...(description !== undefined ? { description } : {}),
+        ...(schema && typeof schema === 'object' ? { schema } : {}),
+        banks:
+          bankIds && Array.isArray(bankIds) ? { set: bankIds.map((id) => ({ id })) } : undefined,
       };
       const loanType = await prisma.loanType.update({
         where: { id },
@@ -78,6 +83,11 @@ class LoanTypeService {
       logger.info('LoanType Updated', { id });
       return loanType;
     } catch (error) {
+      if (error.code === 'P2002') {
+        const conflict = new Error('LoanType with the same unique field already exists');
+        conflict.status = 409;
+        throw conflict;
+      }
       logger.error('Update LoanType Failed', { id, error: error.message });
       throw error;
     }

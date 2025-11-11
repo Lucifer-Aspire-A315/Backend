@@ -1,0 +1,207 @@
+{
+  "info": {
+    "name": "RN FinTech - Loans",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Merchant Login",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{merchantEmail}}\",\n  \"password\": \"{{merchantPassword}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "pm.test('Merchant login success', function () { pm.response.to.have.status(200); pm.expect(res.success).to.be.true; });",
+              "pm.environment.set('jwt', res.data.token);",
+              "pm.environment.set('merchantId', res.data.user.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Apply Loan (Merchant Self)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{jwt}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/loan/apply",
+          "host": ["{{baseUrl}}"],
+          "path": ["loan", "apply"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"loanTypeId\": \"{{loanTypeId}}\",\n  \"amount\": 250000,\n  \"tenorMonths\": 12,\n  \"applicant\": { \"type\": \"merchant\" },\n  \"metadata\": { \n    \"businessGST\": \"27AAAAA1234A1Z5\",\n    \"monthlySales\": 500000,\n    \"yearsInBusiness\": 2\n  }\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "pm.test('Loan applied', function () { pm.response.to.have.status(201); pm.expect(res.data).to.have.property('id'); });",
+              "pm.environment.set('loanId', res.data.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Get Loan",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{jwt}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/loan/{{loanId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["loan", "{{loanId}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "pm.test('Get loan success', function () { pm.response.to.have.status(200); });",
+              "pm.test('Loan is APPROVED', function () { pm.expect(res.data.status).to.eql('APPROVED'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "List Loans",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{jwt}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/loan?page=1&limit=10",
+          "host": ["{{baseUrl}}"],
+          "path": ["loan"],
+          "query": [
+            { "key": "page", "value": "1" },
+            { "key": "limit", "value": "10" }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Banker Login",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": {
+          "raw": "{{baseUrl}}/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["auth", "login"]
+        },
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{bankerEmail}}\",\n  \"password\": \"{{bankerPassword}}\"\n}"
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "pm.test('Banker login success', function () { pm.response.to.have.status(200); pm.expect(res.success).to.be.true; });",
+              "pm.environment.set('jwtBanker', res.data.token);",
+              "pm.environment.set('bankerId', res.data.user.id);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Assign Banker (Self)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{jwtBanker}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/loan/{{loanId}}/assign",
+          "host": ["{{baseUrl}}"],
+          "path": ["loan", "{{loanId}}", "assign"]
+        },
+        "body": { "mode": "raw", "raw": "{\n  \"bankerId\": \"{{bankerId}}\"\n}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "pm.test('Assigned and under review', function () { pm.response.to.have.status(200); pm.expect(res.data.status).to.eql('UNDER_REVIEW'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Approve Loan",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{jwtBanker}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/loan/{{loanId}}/approve",
+          "host": ["{{baseUrl}}"],
+          "path": ["loan", "{{loanId}}", "approve"]
+        },
+        "body": { "mode": "raw", "raw": "{\n  \"notes\": \"Approved by banker\"\n}" }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "const res = pm.response.json();",
+              "pm.test('Loan approved', function () { pm.response.to.have.status(200); pm.expect(res.data.status).to.eql('APPROVED'); });"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reject Loan",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{jwtBanker}}" }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/loan/{{loanId}}/reject",
+          "host": ["{{baseUrl}}"],
+          "path": ["loan", "{{loanId}}", "reject"]
+        },
+        "body": { "mode": "raw", "raw": "{\n  \"notes\": \"Insufficient documentation\"\n}" }
+      }
+    }
+  ]
+}

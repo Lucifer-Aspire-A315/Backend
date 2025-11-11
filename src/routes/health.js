@@ -1,30 +1,29 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
+const prisma = require('../lib/prisma');
 const router = express.Router();
 
 // Health check endpoint
 router.get('/', async (req, res) => {
   try {
-    const prisma = new PrismaClient();
-    
     // Quick DB ping
     await prisma.$queryRaw`SELECT 1 as healthy`;
-    
+
     res.status(200).json({
       status: 'ok',
       timestamp: new Date().toISOString(),
       environment: process.env.NODE_ENV,
       database: 'connected',
-      uptime: process.uptime()
+      uptime: process.uptime(),
     });
-    
-    await prisma.$disconnect();
+
+    // don't disconnect shared prisma client here
   } catch (error) {
-    console.error('Health check failed:', error);
+    const { logger } = require('../middleware/logger');
+    logger.error('Health check failed', { error: error && (error.message || error.stack) });
     res.status(503).json({
       status: 'error',
       message: 'Database connection failed',
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   }
 });

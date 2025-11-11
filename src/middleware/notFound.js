@@ -7,7 +7,7 @@ const notFound = (req, res, next) => {
       path: req.originalUrl,
       message: `API endpoint not found: ${req.originalUrl}`,
       statusCode: 404,
-      suggestion: 'Available: /api/v1/health'
+      suggestion: 'Available: /api/v1/health',
     });
   } else {
     // Let Express handle non-API 404s
