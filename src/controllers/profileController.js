@@ -99,6 +99,15 @@ exports.updateProfile = async (req, res, next) => {
       fields: Object.keys(validatedData),
     });
 
+    // Create Notification
+    await prisma.notification.create({
+      data: {
+        userId,
+        type: 'PROFILE_UPDATE',
+        message: 'Your profile details have been updated successfully.',
+      },
+    });
+
     res.json({ success: true, data: { user: updatedUser, profile: updatedProfile } });
   } catch (err) {
     next(err);

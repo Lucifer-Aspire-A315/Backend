@@ -2,6 +2,7 @@ const prisma = require('../lib/prisma');
 const cloudinary = require('cloudinary').v2;
 const { v4: uuidv4 } = require('uuid');
 const { logger } = require('../middleware/logger');
+const emailSender = require('../utils/emailSender');
 
 // Configure Cloudinary
 cloudinary.config({
@@ -377,12 +378,38 @@ class KYCService {
           status: true,
           userId: true,
           url: true,
+          user: {
+            select: {
+              email: true,
+              name: true,
+            },
+          },
         },
       });
 
       // Create audit log
       const action = status === 'VERIFIED' ? 'KYC_VERIFIED' : 'KYC_REJECTED';
       await this.createKYCAuditLog(kycDocId, action, bankerId, notes);
+
+      // Create Notification
+      await prisma.notification.create({
+        data: {
+          userId: kycDoc.userId,
+          type: 'KYC_UPDATE',
+          message: `Your ${this.getDocTypeName(kycDoc.type)} document has been ${status}. ${notes ? `Reason: ${notes}` : ''}`,
+        },
+      });
+
+      // Send Email
+      if (kycDoc.user && kycDoc.user.email) {
+        emailSender.sendKYCStatusEmail(
+          kycDoc.user.email,
+          kycDoc.user.name,
+          this.getDocTypeName(kycDoc.type),
+          status,
+          notes
+        ).catch(err => logger.error('Failed to send KYC email', { error: err.message }));
+      }
 
       logger.info('KYC Document Verified', {
         kycDocId,

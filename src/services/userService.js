@@ -264,6 +264,9 @@ class UserService {
           name: true,
           status: true, // Added status
           isEmailVerified: true,
+          isTwoFactorEnabled: true,
+          failedLoginAttempts: true,
+          lockoutUntil: true,
           bankerProfile: {
             select: { status: true },
           },
@@ -288,16 +291,8 @@ class UserService {
         return null;
       }
 
-      // Account lockout via kv store
-      const kv = require('../lib/kvstore');
-      const lockKey = `lock:login:${normalizedEmail}`;
-      const failKey = `fail:login:${normalizedEmail}`;
-      const LOCK_THRESHOLD = parseInt(process.env.LOCK_THRESHOLD || '5', 10);
-      const LOCK_TTL = parseInt(process.env.LOCK_TTL_SECONDS || String(15 * 60), 10); // 15 min
-      const FAIL_WINDOW = parseInt(process.env.FAIL_WINDOW_SECONDS || String(60 * 60), 10); // 1 hour
-
-      const isLocked = await kv.get(lockKey);
-      if (isLocked) {
+      // Account lockout via DB
+      if (user.lockoutUntil && user.lockoutUntil > new Date()) {
         const err = new Error('Account temporarily locked due to repeated failed login attempts');
         err.status = 423; // locked
         throw err;
@@ -306,17 +301,35 @@ class UserService {
       const isValid = await bcrypt.compare(password, user.passwordHash);
       if (isValid) {
         // On success clear fail counters
-        await kv.del(failKey);
-        await kv.del(lockKey);
-        const { passwordHash, ...userWithoutPassword } = user;
+        if (user.failedLoginAttempts > 0 || user.lockoutUntil) {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { failedLoginAttempts: 0, lockoutUntil: null },
+          });
+        }
+        
+        const { passwordHash, failedLoginAttempts, lockoutUntil, ...userWithoutPassword } = user;
         return userWithoutPassword;
       }
 
       // On failure increment counter and possibly set lock
-      const fails = await kv.incr(failKey, FAIL_WINDOW);
-      if (fails >= LOCK_THRESHOLD) {
-        await kv.set(lockKey, '1', LOCK_TTL);
+      const LOCK_THRESHOLD = 5;
+      const LOCK_DURATION_MINUTES = 30;
+      
+      const newAttempts = (user.failedLoginAttempts || 0) + 1;
+      let newLockoutUntil = null;
+      
+      if (newAttempts >= LOCK_THRESHOLD) {
+        newLockoutUntil = new Date(Date.now() + LOCK_DURATION_MINUTES * 60000);
       }
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          failedLoginAttempts: newAttempts,
+          lockoutUntil: newLockoutUntil,
+        },
+      });
 
       return null;
     } catch (error) {
@@ -403,22 +416,74 @@ class UserService {
   /**
    * Store a refresh token for a user
    */
-  async storeRefreshToken(userId, token, expiresAt) {
+  async storeRefreshToken(userId, token, expiresAt, deviceInfo = null, ipAddress = null) {
     try {
-      // Calculate expiry date based on '7d' or similar string if passed,
-      // but here we expect a Date object or we calculate it.
-      // The jwtUtil generates the token with an expiry, but we also need to store the expiry in DB.
-      // Let's assume expiresAt is a Date object.
-      
       return await prisma.refreshToken.create({
         data: {
           userId,
           token,
           expiresAt,
+          deviceInfo,
+          ipAddress,
         },
       });
     } catch (error) {
       logger.error('Store Refresh Token Failed', { userId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * List active sessions for a user
+   */
+  async listSessions(userId) {
+    try {
+      return await prisma.refreshToken.findMany({
+        where: {
+          userId,
+          revoked: false,
+          expiresAt: { gt: new Date() },
+        },
+        select: {
+          id: true,
+          deviceInfo: true,
+          ipAddress: true,
+          lastActive: true,
+          createdAt: true,
+          expiresAt: true,
+        },
+        orderBy: { lastActive: 'desc' },
+      });
+    } catch (error) {
+      logger.error('List Sessions Failed', { userId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Revoke a specific session
+   */
+  async revokeSession(userId, sessionId) {
+    try {
+      const session = await prisma.refreshToken.findFirst({
+        where: { id: sessionId, userId },
+      });
+
+      if (!session) {
+        const error = new Error('Session not found');
+        error.status = 404;
+        throw error;
+      }
+
+      await prisma.refreshToken.update({
+        where: { id: sessionId },
+        data: { revoked: true },
+      });
+
+      logger.info('Session Revoked', { userId, sessionId });
+      return true;
+    } catch (error) {
+      logger.error('Revoke Session Failed', { userId, sessionId, error: error.message });
       throw error;
     }
   }
@@ -506,6 +571,23 @@ class UserService {
       logger.error('Change Password Failed', { userId, error: error.message });
       throw error;
     }
+  }
+
+  /**
+   * Find user by ID including secrets (internal use only)
+   */
+  async findUserByIdWithSecret(userId) {
+    return await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        isTwoFactorEnabled: true,
+        twoFactorSecret: true,
+      },
+    });
   }
 }
 

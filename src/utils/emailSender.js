@@ -58,36 +58,67 @@ async function sendViaSmtp(to, subject, html, text) {
   return transporter.sendMail(mailOptions);
 }
 
-async function sendEmail({ to, subject, html, text }) {
-  // In development, optionally log the link and skip actual sending to avoid requiring
-  // SMTP/Resend credentials during local testing. Set DEV_SEND_EMAIL=true to enable
-  // dev-mode logging and skip network sends.
-  if (!isProduction && process.env.DEV_SEND_EMAIL === 'true') {
-    // Try to extract any http(s) URL from the HTML/text and log it for developer convenience
-    // Avoid a faulty character class that truncates at dashes; only exclude whitespace and quotes
-    const maybeUrl = (html || text || '').match(/https?:\/\/[^\s"']+/);
-    if (maybeUrl) logger.info('[DEV] Email link', { to, url: maybeUrl[0] });
-    logger.info('DEV mode - skipping actual email send', { to, subject });
-    return Promise.resolve({ dev: true, to, subject });
-  }
-
-  // Prefer Resend if API key provided
-  if (process.env.RESEND_API_KEY) {
-    try {
-      return await sendViaResend(to, subject, html, text);
-    } catch (err) {
-      logger.error('Resend send failed, falling back to SMTP', { to, error: err.message });
-      // fallthrough to SMTP
-    }
-  }
-
-  // SMTP fallback
+async function sendEmail(to, subject, html, text) {
   try {
-    return await sendViaSmtp(to, subject, html, text);
-  } catch (err) {
-    logger.error('SMTP send failed', { to, error: err.message });
-    throw err;
+    if (process.env.RESEND_API_KEY) {
+      return await sendViaResend(to, subject, html, text);
+    } else {
+      return await sendViaSmtp(to, subject, html, text);
+    }
+  } catch (error) {
+    logger.error('Email sending failed', { error: error.message, to, subject });
+    // Don't throw in production to avoid breaking the flow, but log it
+    if (isProduction) return { success: false, error: error.message };
+    throw error;
   }
+}
+
+/**
+ * Send KYC Status Update Email
+ */
+async function sendKYCStatusEmail(to, userName, docType, status, notes) {
+  const subject = `KYC Document ${status === 'VERIFIED' ? 'Approved' : 'Rejected'} - RN FinTech`;
+  const color = status === 'VERIFIED' ? '#4CAF50' : '#F44336';
+  
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: ${color};">KYC Document Update</h2>
+      <p>Hello ${userName},</p>
+      <p>Your <strong>${docType}</strong> document has been <strong>${status}</strong>.</p>
+      ${notes ? `<p><strong>Banker Notes:</strong> ${notes}</p>` : ''}
+      <p>Please log in to the app to view more details.</p>
+    </div>
+  `;
+  
+  const text = `Hello ${userName},\n\nYour ${docType} document has been ${status}.\n${notes ? `Notes: ${notes}\n` : ''}\nPlease log in to check details.`;
+
+  return sendEmail(to, subject, html, text);
+}
+
+/**
+ * Send New Device Login Alert
+ */
+async function sendNewDeviceLoginEmail(to, userName, deviceInfo, ipAddress, time) {
+  const subject = 'Security Alert: New Login Detected';
+  
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #FF9800;">New Login Detected</h2>
+      <p>Hello ${userName},</p>
+      <p>We detected a login to your account from a new device.</p>
+      <ul>
+        <li><strong>Device:</strong> ${deviceInfo}</li>
+        <li><strong>IP Address:</strong> ${ipAddress}</li>
+        <li><strong>Time:</strong> ${time}</li>
+      </ul>
+      <p>If this was you, you can ignore this email.</p>
+      <p style="color: red;">If you did not authorize this login, please contact support immediately and change your password.</p>
+    </div>
+  `;
+
+  const text = `Hello ${userName},\n\nNew login detected from ${deviceInfo} (${ipAddress}) at ${time}.\nIf this wasn't you, please contact support immediately.`;
+
+  return sendEmail(to, subject, html, text);
 }
 
 function buildVerificationEmail(verificationUrl) {
@@ -116,4 +147,10 @@ async function sendPasswordResetEmail(to, token) {
   return sendEmail({ to, subject, html, text });
 }
 
-module.exports = { sendVerificationEmail, sendPasswordResetEmail };
+module.exports = {
+  sendEmail,
+  sendKYCStatusEmail,
+  sendNewDeviceLoginEmail,
+  sendVerificationEmail,
+  sendPasswordResetEmail,
+};

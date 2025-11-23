@@ -54,6 +54,14 @@ model User {
   documents                     Document[]
   updatedLoanStatuses           LoanStatusHistory[] @relation("UserUpdatedLoanStatuses")
   refreshTokens                 RefreshToken[]
+
+  // Security / Lockout
+  failedLoginAttempts Int       @default(0)
+  lockoutUntil        DateTime?
+
+  // 2FA
+  isTwoFactorEnabled  Boolean   @default(false)
+  twoFactorSecret     String?
 }
 
 model BankerProfile {
@@ -230,6 +238,11 @@ model RefreshToken {
   expiresAt DateTime
   revoked   Boolean  @default(false)
   createdAt DateTime @default(now())
+  
+  // Session Metadata
+  deviceInfo String?
+  ipAddress  String?
+  lastActive DateTime @default(now())
 }
 
 enum Role {

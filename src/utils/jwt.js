@@ -59,6 +59,26 @@ class JWTUtil {
   }
 
   /**
+   * Generate temporary token for 2FA
+   */
+  generateTempToken(user) {
+    try {
+      const payload = {
+        userId: user.id,
+        role: user.role,
+        type: '2fa_pending',
+      };
+
+      return jwt.sign(payload, process.env.JWT_SECRET, {
+        expiresIn: '5m', // Short expiry
+      });
+    } catch (error) {
+      logger.error('Temp Token Generation Failed', { userId: user.id, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
    * Verify token and extract user info
    */
   verifyToken(token) {
