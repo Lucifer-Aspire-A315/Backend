@@ -8,7 +8,15 @@ class DocumentService {
    */
   generateUploadSignature(folder, publicId) {
     const timestamp = Math.floor(Date.now() / 1000);
-    const signature = generateSignature({ public_id: publicId, folder, timestamp });
+    // If publicId contains slashes, Cloudinary treats it as folder structure.
+    // We don't need to pass 'folder' param if it's baked into publicId, 
+    // BUT if we do pass it, it might prepend it.
+    // To be safe and simple: We will NOT pass 'folder' in params if we are defining full public_id.
+    
+    const params = { public_id: publicId, timestamp };
+    if (folder) params.folder = folder;
+
+    const signature = generateSignature(params);
     const { cloudName, apiKey } = getUploadConfig();
     
     return {

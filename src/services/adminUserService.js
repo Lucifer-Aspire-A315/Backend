@@ -1,5 +1,6 @@
 const prisma = require('../lib/prisma');
 const { logger } = require('../middleware/logger');
+const auditService = require('./auditService');
 
 class UserService {
   /**
@@ -59,7 +60,13 @@ class UserService {
   /**
    * Update user status (Admin only)
    */
-  async updateUserStatus(userId, status) {
+  async updateUserStatus(userId, status, adminId) {
+    if (userId === adminId && status === 'SUSPENDED') {
+      const error = new Error('Admins cannot suspend their own account');
+      error.status = 400;
+      throw error;
+    }
+
     try {
       const user = await prisma.user.update({
         where: { id: userId },
@@ -67,6 +74,14 @@ class UserService {
         select: { id: true, email: true, status: true },
       });
       
+      await auditService.log({
+        action: 'USER_STATUS_UPDATE',
+        actorId: adminId,
+        entityType: 'USER',
+        entityId: userId,
+        details: { oldStatus: 'UNKNOWN', newStatus: status }, // We could fetch old status if needed, but keeping it simple
+      });
+
       logger.info('User status updated', { userId, status });
       return user;
     } catch (error) {

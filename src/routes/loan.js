@@ -25,4 +25,10 @@ router.post('/:id/approve', authorize(['BANKER']), loanController.approveLoan);
 // Reject loan (BANKER only)
 router.post('/:id/reject', authorize(['BANKER']), loanController.rejectLoan);
 
+// Disburse loan (BANKER only)
+router.post('/:id/disburse', authorize(['BANKER']), loanController.disburseLoan);
+
+// Cancel loan (MERCHANT/CUSTOMER)
+router.post('/:id/cancel', authorize(['MERCHANT', 'CUSTOMER']), loanController.cancelLoan);
+
 module.exports = router;

@@ -262,6 +262,7 @@ class UserService {
           passwordHash: true,
           role: true,
           name: true,
+          status: true, // Added status
           isEmailVerified: true,
           bankerProfile: {
             select: { status: true },
@@ -469,6 +470,40 @@ class UserService {
       });
     } catch (error) {
       logger.error('Revoke All Refresh Tokens Failed', { userId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Change password for authenticated user
+   */
+  async changePassword(userId, oldPassword, newPassword) {
+    try {
+      const user = await prisma.user.findUnique({ where: { id: userId } });
+      if (!user) {
+        const error = new Error('User not found');
+        error.status = 404;
+        throw error;
+      }
+
+      const isValid = await bcrypt.compare(oldPassword, user.passwordHash);
+      if (!isValid) {
+        const error = new Error('Invalid old password');
+        error.status = 401;
+        throw error;
+      }
+
+      const salt = await bcrypt.genSalt(10);
+      const passwordHash = await bcrypt.hash(newPassword, salt);
+
+      await prisma.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+      });
+
+      logger.info('Password changed successfully', { userId });
+    } catch (error) {
+      logger.error('Change Password Failed', { userId, error: error.message });
       throw error;
     }
   }

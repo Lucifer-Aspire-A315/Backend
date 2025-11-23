@@ -24,6 +24,7 @@ enum UserStatus {
   ACTIVE
   SUSPENDED
   REJECTED
+  DELETED
 }
 
 model User {
@@ -34,6 +35,7 @@ model User {
   passwordHash                  String
   role                          Role
   status                        UserStatus          @default(ACTIVE)
+  avatar                        String?
   loans                         Loan[]
   merchantLoans                 Loan[]              @relation("MerchantLoans")
   bankerLoans                   Loan[]              @relation("BankerLoans")
@@ -105,7 +107,13 @@ model LoanType {
   name        String   @unique
   code        String?  @unique
   description String?
+  interestRate Decimal @default(0.0) @db.Decimal(5, 2)
+  minTenure    Int?    // in months
+  maxTenure    Int?    // in months
+  minAmount    Decimal? @db.Decimal(18, 2)
+  maxAmount    Decimal? @db.Decimal(18, 2)
   schema      Json     @default("{}")
+  requiredDocuments String[] @default([])
   loans       Loan[]
   banks       Bank[]   @relation("BankLoanTypes")
   createdAt   DateTime @default(now())
@@ -191,12 +199,17 @@ model Notification {
 }
 
 model AuditLog {
-  id        String   @id @default(uuid())
-  loan      Loan     @relation(fields: [loanId], references: [id])
-  loanId    String
-  action    String
-  actorId   String
-  createdAt DateTime @default(now())
+  id         String   @id @default(uuid())
+  action     String
+  actorId    String
+  entityType String   @default("LOAN") // LOAN, USER, LOAN_TYPE
+  entityId   String
+  details    String?
+  createdAt  DateTime @default(now())
+
+  // Optional relation to Loan (for backward compatibility and easy joins)
+  loan       Loan?    @relation(fields: [loanId], references: [id])
+  loanId     String?
 }
 
 model KYCAuditLog {

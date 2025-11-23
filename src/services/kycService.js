@@ -149,6 +149,26 @@ class KYCService {
    */
   async completeUpload(kycDocId, publicId, fileSize, contentType) {
     try {
+      // Fetch doc first to verify ownership/state and reconstruct publicId
+      const existingDoc = await prisma.kYCDocument.findUnique({ where: { id: kycDocId } });
+      if (!existingDoc) {
+        const error = new Error('KYC document not found');
+        error.status = 404;
+        throw error;
+      }
+
+      // Enforce publicId structure to prevent IDOR/Path Traversal
+      const expectedPublicId = `${existingDoc.userId}/${existingDoc.type}/${existingDoc.id}`;
+      if (publicId !== expectedPublicId) {
+        logger.warn('Mismatch in publicId during completion', {
+          provided: publicId,
+          expected: expectedPublicId,
+          kycDocId,
+        });
+        // Force the correct publicId
+        publicId = expectedPublicId;
+      }
+
       // Validate file
       if (fileSize > parseInt(process.env.KYC_MAX_FILE_SIZE || '5242880')) {
         const error = new Error('File size exceeds 5MB limit');

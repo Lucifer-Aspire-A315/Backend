@@ -6,9 +6,25 @@ class UploadController {
   // Generate signature for client-side upload
   async getUploadSignature(req, res, next) {
     try {
-      const { public_id, folder } = req.query;
-      const config = documentService.generateUploadSignature(folder, public_id);
-      res.json(config);
+      const userId = req.user.userId;
+      const { folder = 'misc', filename } = req.query;
+      
+      // Enforce ownership: public_id MUST start with userId
+      // We generate a unique ID here to ensure no collisions and enforce structure
+      // Structure: {userId}/{folder}/{timestamp}-{random}
+      const timestamp = Math.floor(Date.now() / 1000);
+      const random = Math.random().toString(36).substring(2, 10);
+      const public_id = `${userId}/${folder}/${timestamp}-${random}`;
+
+      const config = documentService.generateUploadSignature(null, public_id); // folder is part of public_id in this strategy or we pass folder separately?
+      // Cloudinary allows folder in public_id OR as separate param. 
+      // If we put slashes in public_id, it implies folders.
+      // Let's pass folder=null to generateSignature so it doesn't double-folder, 
+      // but we need to check how generateSignature handles it.
+      
+      // Actually, let's look at documentService.
+      
+      res.json({ ...config, public_id });
     } catch (err) {
       logger.error('Upload sign failed', { error: err && err.message });
       next(err);

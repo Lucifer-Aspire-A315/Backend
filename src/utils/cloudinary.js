@@ -1,4 +1,14 @@
 const crypto = require('crypto');
+const cloudinary = require('cloudinary').v2;
+
+// Configure Cloudinary
+if (process.env.CLOUDINARY_CLOUD_NAME) {
+  cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET,
+  });
+}
 
 function buildStringToSign(params) {
   // include only non-empty params and sort keys alphabetically
@@ -30,4 +40,26 @@ function getUploadConfig() {
   return { cloudName, apiKey };
 }
 
-module.exports = { generateSignature, getUploadConfig };
+/**
+ * Verify if a resource exists in Cloudinary
+ * @param {string} publicId
+ * @returns {Promise<boolean>}
+ */
+async function verifyResource(publicId) {
+  try {
+    if (!publicId) return false;
+    // Use the Admin API to check resource details
+    // Note: This requires the API Key and Secret to be set correctly
+    await cloudinary.api.resource(publicId);
+    return true;
+  } catch (error) {
+    if (error.http_code === 404) {
+      return false;
+    }
+    // If it's another error (e.g. auth), we might want to log it but for now assume verification failed
+    console.error('Cloudinary verification error:', error.message);
+    return false;
+  }
+}
+
+module.exports = { generateSignature, getUploadConfig, verifyResource, cloudinary };

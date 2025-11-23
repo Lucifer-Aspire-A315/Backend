@@ -32,6 +32,36 @@ class DashboardService {
         },
       });
 
+      // 4. Daily Loan Volume (Last 7 Days)
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+      
+      const dailyVolume = await prisma.loan.groupBy({
+        by: ['createdAt'],
+        where: {
+          createdAt: { gte: sevenDaysAgo },
+        },
+        _count: { id: true },
+        _sum: { amount: true },
+      });
+      
+      // Group by date string (YYYY-MM-DD) manually since Prisma groupBy on date returns full timestamp
+      // Actually, Prisma groupBy on DateTime fields groups by exact timestamp.
+      // We need to fetch raw or process in JS. For small scale, JS processing is fine.
+      // Better approach: Fetch all loans in last 7 days and aggregate in JS.
+      const recentLoans = await prisma.loan.findMany({
+        where: { createdAt: { gte: sevenDaysAgo } },
+        select: { createdAt: true, amount: true },
+      });
+
+      const dailyStats = {};
+      recentLoans.forEach(loan => {
+        const date = loan.createdAt.toISOString().split('T')[0];
+        if (!dailyStats[date]) dailyStats[date] = { count: 0, volume: 0 };
+        dailyStats[date].count++;
+        dailyStats[date].volume += Number(loan.amount);
+      });
+
       // Format Data
       const users = userCounts.reduce((acc, curr) => {
         acc[curr.role] = curr._count.id;
@@ -53,7 +83,7 @@ class DashboardService {
         loans.totalVolume += Number(stat._sum.amount || 0);
       });
 
-      return { users, loans, recentActivity };
+      return { users, loans, recentActivity, dailyStats };
     } catch (error) {
       logger.error('Get Admin Stats Failed', { error: error.message });
       throw error;
@@ -102,6 +132,8 @@ class DashboardService {
         },
       });
 
+      const notifications = await this.getRecentNotifications(bankerId);
+
       return {
         queue: {
           myPending: myPendingCount,
@@ -112,6 +144,7 @@ class DashboardService {
           return acc;
         }, {}),
         recentActions,
+        notifications,
       };
     } catch (error) {
       logger.error('Get Banker Stats Failed', { bankerId, error: error.message });
@@ -160,6 +193,8 @@ class DashboardService {
 
       const approvalRate = totalApps > 0 ? Math.round((approvedApps / totalApps) * 100) : 0;
 
+      const notifications = await this.getRecentNotifications(merchantId);
+
       return {
         summary: {
           totalApps,
@@ -168,6 +203,7 @@ class DashboardService {
         },
         byStatus,
         recentApps,
+        notifications,
       };
     } catch (error) {
       logger.error('Get Merchant Stats Failed', { merchantId, error: error.message });
@@ -204,6 +240,8 @@ class DashboardService {
         _count: { id: true },
       });
 
+      const notifications = await this.getRecentNotifications(customerId);
+
       return {
         activeLoan: activeLoan
           ? {
@@ -219,11 +257,30 @@ class DashboardService {
           acc[curr.status] = curr._count.id;
           return acc;
         }, {}),
+        notifications,
       };
     } catch (error) {
       logger.error('Get Customer Stats Failed', { customerId, error: error.message });
       throw error;
     }
+  }
+
+  /**
+   * Helper: Get recent notifications for any user
+   */
+  async getRecentNotifications(userId) {
+    return prisma.notification.findMany({
+      where: { userId },
+      take: 5,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        type: true,
+        message: true,
+        status: true,
+        createdAt: true,
+      },
+    });
   }
 }
 

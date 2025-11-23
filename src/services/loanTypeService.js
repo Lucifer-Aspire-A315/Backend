@@ -1,17 +1,52 @@
 const prisma = require('../lib/prisma');
 const { logger } = require('../middleware/logger');
+const Ajv = require('ajv');
+const addFormats = require('ajv-formats');
+
+const ajv = new Ajv({ allErrors: true });
+addFormats(ajv);
 
 class LoanTypeService {
   /**
    * Create a new loan type
    */
-  async createLoanType({ name, code, description, schema, bankIds }) {
+  async createLoanType({
+    name,
+    code,
+    description,
+    interestRate,
+    minTenure,
+    maxTenure,
+    minAmount,
+    maxAmount,
+    schema,
+    requiredDocuments,
+    bankIds,
+  }) {
     try {
+      // Validate JSON Schema if provided
+      if (schema && typeof schema === 'object') {
+        try {
+          ajv.compile(schema);
+        } catch (e) {
+          const error = new Error('Invalid JSON Schema provided');
+          error.status = 400;
+          error.details = e.message;
+          throw error;
+        }
+      }
+
       const data = {
         name,
         code: code || undefined,
         description,
+        interestRate,
+        minTenure,
+        maxTenure,
+        minAmount,
+        maxAmount,
         schema: schema && typeof schema === 'object' ? schema : undefined,
+        requiredDocuments: requiredDocuments || [],
         banks:
           bankIds && Array.isArray(bankIds)
             ? { connect: bankIds.map((id) => ({ id })) }
@@ -65,13 +100,46 @@ class LoanTypeService {
   /**
    * Update loan type
    */
-  async updateLoanType(id, { name, code, description, schema, bankIds }) {
+  async updateLoanType(
+    id,
+    {
+      name,
+      code,
+      description,
+      interestRate,
+      minTenure,
+      maxTenure,
+      minAmount,
+      maxAmount,
+      schema,
+      requiredDocuments,
+      bankIds,
+    },
+  ) {
     try {
+      // Validate JSON Schema if provided
+      if (schema && typeof schema === 'object') {
+        try {
+          ajv.compile(schema);
+        } catch (e) {
+          const error = new Error('Invalid JSON Schema provided');
+          error.status = 400;
+          error.details = e.message;
+          throw error;
+        }
+      }
+
       const data = {
         ...(name !== undefined ? { name } : {}),
         ...(code !== undefined ? { code } : {}),
         ...(description !== undefined ? { description } : {}),
+        ...(interestRate !== undefined ? { interestRate } : {}),
+        ...(minTenure !== undefined ? { minTenure } : {}),
+        ...(maxTenure !== undefined ? { maxTenure } : {}),
+        ...(minAmount !== undefined ? { minAmount } : {}),
+        ...(maxAmount !== undefined ? { maxAmount } : {}),
         ...(schema && typeof schema === 'object' ? { schema } : {}),
+        ...(requiredDocuments !== undefined ? { requiredDocuments } : {}),
         banks:
           bankIds && Array.isArray(bankIds) ? { set: bankIds.map((id) => ({ id })) } : undefined,
       };

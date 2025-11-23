@@ -73,6 +73,25 @@ const errorHandler = (err, req, res, next) => {
       field: response.field,
       value: req.body[response.field],
     });
+  } else if (err.code === 'P2003') {
+    statusCode = 409;
+    response.message = 'Operation failed due to existing dependencies (Foreign Key Constraint)';
+    response.statusCode = 409;
+    response.details = err.meta?.field_name || 'Unknown dependency';
+    
+    logger.warn('Foreign Key Constraint Failed', {
+      path: req.originalUrl,
+      details: response.details
+    });
+  } else if (err.code === 'P2025') {
+    statusCode = 404;
+    response.message = 'Record not found or dependent record missing';
+    response.statusCode = 404;
+    
+    logger.warn('Record Not Found (Prisma)', {
+      path: req.originalUrl,
+      details: err.meta?.cause || err.message
+    });
   }
 
   // Handle authentication errors

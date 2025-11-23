@@ -175,7 +175,13 @@ const validationSchemas = {
     name: Joi.string().trim().min(2).max(100).required(),
     code: Joi.string().trim().max(50).optional().allow(null, ''),
     description: Joi.string().max(500).optional().allow('', null),
+    interestRate: Joi.number().min(0).max(100).required(),
+    minTenure: Joi.number().integer().min(1).optional(),
+    maxTenure: Joi.number().integer().min(1).greater(Joi.ref('minTenure')).optional(),
+    minAmount: Joi.number().min(0).optional(),
+    maxAmount: Joi.number().min(0).greater(Joi.ref('minAmount')).optional(),
     schema: Joi.object().unknown(true).optional(),
+    requiredDocuments: Joi.array().items(Joi.string()).optional(),
     bankIds: Joi.array().items(Joi.string().uuid()).optional(),
   }),
 
@@ -183,9 +189,46 @@ const validationSchemas = {
     name: Joi.string().trim().min(2).max(100).optional(),
     code: Joi.string().trim().max(50).optional().allow(null, ''),
     description: Joi.string().max(500).optional().allow('', null),
+    interestRate: Joi.number().min(0).max(100).optional(),
+    minTenure: Joi.number().integer().min(1).optional(),
+    maxTenure: Joi.number().integer().min(1).optional(), // Joi ref validation is tricky in updates, keeping simple
+    minAmount: Joi.number().min(0).optional(),
+    maxAmount: Joi.number().min(0).optional(),
     schema: Joi.object().unknown(true).optional(),
+    requiredDocuments: Joi.array().items(Joi.string()).optional(),
     bankIds: Joi.array().items(Joi.string().uuid()).optional(),
   }).min(1),
+
+  // Profile Update Schemas
+  updateProfileCustomer: Joi.object({
+    name: Joi.string().trim().min(2).max(100).optional(),
+    address: Joi.string().max(255).optional().allow(''),
+    pincode: Joi.string().pattern(/^\d{6}$/).optional().allow(''),
+    avatar: Joi.string().uri().optional().allow(null, ''),
+  }),
+
+  updateProfileMerchant: Joi.object({
+    name: Joi.string().trim().min(2).max(100).optional(),
+    businessName: Joi.string().min(2).max(100).optional(),
+    gstNumber: Joi.string().max(20).optional().allow(''),
+    address: Joi.string().max(255).optional().allow(''),
+    pincode: Joi.string().pattern(/^\d{6}$/).optional().allow(''),
+    avatar: Joi.string().uri().optional().allow(null, ''),
+  }),
+
+  updateProfileBanker: Joi.object({
+    name: Joi.string().trim().min(2).max(100).optional(),
+    branch: Joi.string().max(100).optional(),
+    pincode: Joi.string().pattern(/^\d{6}$/).optional(),
+    employeeId: Joi.string().max(50).optional().allow(''),
+    avatar: Joi.string().uri().optional().allow(null, ''),
+    // bankId is NOT allowed to be updated by the banker themselves
+  }),
+
+  changePassword: Joi.object({
+    oldPassword: Joi.string().required(),
+    newPassword: passwordSchema,
+  }),
 };
 
 const validate = (schema, data) => {

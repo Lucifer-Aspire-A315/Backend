@@ -1,6 +1,7 @@
 const prisma = require('../lib/prisma');
 const { logger } = require('../middleware/logger');
 const { hashToken } = require('../utils/emailVerification');
+const { verifyResource } = require('../utils/cloudinary');
 const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
 
@@ -13,6 +14,8 @@ class LoanService {
    */
   async applyForLoan(data, merchantId) {
     const { applicant, loanTypeId, amount, tenorMonths, metadata = {}, documents = [] } = data;
+
+    logger.info('Applying for loan', { merchantId, loanTypeId, amount });
 
     // Fetch loan type and validate
     const loanType = await prisma.loanType.findUnique({
@@ -37,6 +40,20 @@ class LoanService {
         const error = new Error('Invalid loan metadata');
         error.status = 400;
         error.details = validate.errors;
+        throw error;
+      }
+    }
+
+    // Validate required documents
+    if (loanType.requiredDocuments && loanType.requiredDocuments.length > 0) {
+      const uploadedDocTypes = documents.map((doc) => doc.type || doc.fileType);
+      const missingDocs = loanType.requiredDocuments.filter(
+        (reqDoc) => !uploadedDocTypes.includes(reqDoc),
+      );
+
+      if (missingDocs.length > 0) {
+        const error = new Error(`Missing required documents: ${missingDocs.join(', ')}`);
+        error.status = 400;
         throw error;
       }
     }
@@ -151,6 +168,38 @@ class LoanService {
       throw error;
     }
 
+    // Verify documents exist in Cloudinary AND belong to the uploader
+    if (documents.length > 0) {
+      const verificationPromises = documents.map(async (doc) => {
+        const publicId = doc.public_id || doc.publicId;
+        if (!publicId) return false;
+
+        // Ownership check: publicId must start with merchantId (uploader) OR customerId (beneficiary)
+        const isMerchantDoc = publicId.startsWith(merchantId);
+        const isCustomerDoc = customerId && publicId.startsWith(customerId);
+
+        if (!isMerchantDoc && !isCustomerDoc) {
+          logger.warn('Document ownership mismatch', { publicId, merchantId, customerId });
+          return false;
+        }
+
+        return verifyResource(publicId);
+      });
+
+      const results = await Promise.all(verificationPromises);
+      const invalidDocs = documents.filter((_, index) => !results[index]);
+
+      if (invalidDocs.length > 0) {
+        const error = new Error(
+          `Invalid documents: The following files could not be verified or do not belong to you: ${invalidDocs
+            .map((d) => d.filename || d.public_id)
+            .join(', ')}`,
+        );
+        error.status = 400;
+        throw error;
+      }
+    }
+
     const loan = await prisma.$transaction(async (tx) => {
       const newLoan = await tx.loan.create({
         data: {
@@ -188,7 +237,8 @@ class LoanService {
 
       await tx.auditLog.create({
         data: {
-          loanId: newLoan.id,
+          entityType: 'LOAN',
+          entityId: newLoan.id,
           action: 'LOAN_APPLIED',
           actorId: merchantId,
         },
@@ -386,7 +436,8 @@ class LoanService {
 
       await tx.auditLog.create({
         data: {
-          loanId,
+          entityType: 'LOAN',
+          entityId: loanId,
           action: 'BANKER_ASSIGNED',
           actorId: assignedBy,
         },
@@ -402,7 +453,7 @@ class LoanService {
   /**
    * Approve loan
    */
-  async approveLoan(loanId, bankerId, _notes) {
+  async approveLoan(loanId, bankerId, notes, interestRate) {
     const loan = await prisma.loan.findUnique({
       where: { id: loanId },
       include: {
@@ -426,6 +477,12 @@ class LoanService {
     if (loan.bankerId !== bankerId) {
       const error = new Error('Only assigned banker can approve this loan');
       error.status = 403;
+      throw error;
+    }
+
+    if (!interestRate || interestRate <= 0) {
+      const error = new Error('Valid interest rate is required for approval');
+      error.status = 400;
       throw error;
     }
 
@@ -454,6 +511,7 @@ class LoanService {
         data: {
           status: 'APPROVED',
           kycStatus: 'VERIFIED',
+          interestRate: interestRate,
         },
         include: {
           loanType: true,
@@ -465,9 +523,11 @@ class LoanService {
 
       await tx.auditLog.create({
         data: {
-          loanId,
+          entityType: 'LOAN',
+          entityId: loanId,
           action: 'LOAN_APPROVED',
           actorId: bankerId,
+          details: `Rate: ${interestRate}%, Notes: ${notes || ''}`,
         },
       });
 
@@ -528,7 +588,8 @@ class LoanService {
 
       await tx.auditLog.create({
         data: {
-          loanId,
+          entityType: 'LOAN',
+          entityId: loanId,
           action: 'LOAN_REJECTED',
           actorId: bankerId,
         },
@@ -543,6 +604,137 @@ class LoanService {
     );
 
     return rejectedLoan;
+  }
+
+  /**
+   * Disburse loan
+   */
+  async disburseLoan(loanId, bankerId, referenceId, notes) {
+    const loan = await prisma.loan.findUnique({
+      where: { id: loanId },
+      include: {
+        applicant: { select: { id: true, role: true, name: true, email: true } },
+        merchant: { select: { id: true, name: true, email: true } },
+      },
+    });
+
+    if (!loan) {
+      const error = new Error('Loan not found');
+      error.status = 404;
+      throw error;
+    }
+
+    if (loan.status !== 'APPROVED') {
+      const error = new Error('Loan must be APPROVED to disburse');
+      error.status = 400;
+      throw error;
+    }
+
+    if (loan.bankerId !== bankerId) {
+      const error = new Error('Only assigned banker can disburse this loan');
+      error.status = 403;
+      throw error;
+    }
+
+    if (!referenceId) {
+      const error = new Error('Transaction reference ID is required for disbursement');
+      error.status = 400;
+      throw error;
+    }
+
+    const disbursedLoan = await prisma.$transaction(async (tx) => {
+      // Update metadata with disbursement details
+      const metadata = loan.metadata || {};
+      metadata.disbursement = {
+        referenceId,
+        notes,
+        disbursedAt: new Date(),
+      };
+
+      const updated = await tx.loan.update({
+        where: { id: loanId },
+        data: {
+          status: 'DISBURSED',
+          metadata,
+        },
+        include: {
+          loanType: true,
+          merchant: { select: { id: true, name: true, email: true } },
+          applicant: { select: { id: true, name: true, email: true } },
+          banker: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          entityType: 'LOAN',
+          entityId: loanId,
+          action: 'LOAN_DISBURSED',
+          actorId: bankerId,
+          details: `Ref: ${referenceId}`,
+        },
+      });
+
+      return updated;
+    });
+
+    logger.info('Loan disbursed', { loanId, bankerId, referenceId });
+    this.notifyLoanDisbursement(disbursedLoan).catch((err) =>
+      logger.error('Notification failed', { error: err.message }),
+    );
+
+    return disbursedLoan;
+  }
+
+  /**
+   * Cancel loan (Applicant/Merchant)
+   */
+  async cancelLoan(loanId, userId, reason) {
+    const loan = await prisma.loan.findUnique({ where: { id: loanId } });
+
+    if (!loan) {
+      const error = new Error('Loan not found');
+      error.status = 404;
+      throw error;
+    }
+
+    // Check ownership
+    if (loan.applicantId !== userId && loan.merchantId !== userId) {
+      const error = new Error('Not authorized to cancel this loan');
+      error.status = 403;
+      throw error;
+    }
+
+    // Check status
+    if (!['DRAFT', 'SUBMITTED', 'UNDER_REVIEW', 'APPROVED'].includes(loan.status)) {
+      const error = new Error('Cannot cancel loan in current status (must be DRAFT, SUBMITTED, UNDER_REVIEW or APPROVED)');
+      error.status = 400;
+      throw error;
+    }
+
+    const cancelledLoan = await prisma.$transaction(async (tx) => {
+      const updated = await tx.loan.update({
+        where: { id: loanId },
+        data: {
+          status: 'CANCELLED',
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          entityType: 'LOAN',
+          entityId: loanId,
+          action: 'LOAN_CANCELLED',
+          actorId: userId,
+          details: reason,
+        },
+      });
+
+      return updated;
+    });
+
+    logger.info('Loan cancelled', { loanId, userId });
+    return cancelledLoan;
   }
 
   /**
@@ -584,6 +776,27 @@ class LoanService {
         loan.merchantId,
         'LOAN_REJECTED',
         `Loan application for ${loan.applicant.name} has been rejected.`
+      );
+    }
+  }
+
+  async notifyLoanDisbursement(loan) {
+    const notificationService = require('./notificationService');
+    const ref = loan.metadata?.disbursement?.referenceId || 'N/A';
+
+    // Notify Applicant
+    await notificationService.createNotification(
+      loan.applicantId,
+      'LOAN_DISBURSED',
+      `Your loan of ${loan.amount} has been disbursed. Ref: ${ref}`
+    );
+
+    // Notify Merchant (if different)
+    if (loan.merchantId !== loan.applicantId) {
+      await notificationService.createNotification(
+        loan.merchantId,
+        'LOAN_DISBURSED',
+        `Loan for ${loan.applicant.name} has been disbursed. Ref: ${ref}`
       );
     }
   }

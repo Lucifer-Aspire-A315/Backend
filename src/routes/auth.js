@@ -3,6 +3,7 @@ const authController = require('../controllers/authController');
 const { authLimiter } = require('../middleware/rateLimiter');
 const { accountRateLimiter } = require('../middleware/accountRateLimiter');
 const router = express.Router();
+const auth = require('../middleware/auth');
 
 // POST /api/v1/auth/resend-verification - Resend email verification
 router.post(
@@ -37,5 +38,8 @@ router.post('/refresh-token', authLimiter, authController.refreshToken);
 
 // POST /api/v1/auth/logout - Logout user
 router.post('/logout', authLimiter, authController.logout);
+
+// POST /api/v1/auth/change-password - Change password
+router.post('/change-password', auth.authenticate, authController.changePassword);
 
 module.exports = router;

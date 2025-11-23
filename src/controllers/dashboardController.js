@@ -3,7 +3,7 @@ const dashboardService = require('../services/dashboardService');
 class DashboardController {
   async getDashboard(req, res, next) {
     try {
-      const { role, id } = req.user;
+      const { role, userId } = req.user;
       let data = {};
 
       switch (role) {
@@ -11,13 +11,13 @@ class DashboardController {
           data = await dashboardService.getAdminStats();
           break;
         case 'BANKER':
-          data = await dashboardService.getBankerStats(id);
+          data = await dashboardService.getBankerStats(userId);
           break;
         case 'MERCHANT':
-          data = await dashboardService.getMerchantStats(id);
+          data = await dashboardService.getMerchantStats(userId);
           break;
         case 'CUSTOMER':
-          data = await dashboardService.getCustomerStats(id);
+          data = await dashboardService.getCustomerStats(userId);
           break;
         default:
           return res.status(400).json({

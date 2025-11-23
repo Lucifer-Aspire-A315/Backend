@@ -103,10 +103,16 @@ async function assignBanker(req, res, next) {
 async function approveLoan(req, res, next) {
   try {
     const { id } = req.params;
-    const { notes } = req.body;
+    const { notes, interestRate } = req.body;
     const bankerId = req.user.userId;
 
-    const loan = await loanService.approveLoan(id, bankerId, notes);
+    if (!interestRate) {
+      const error = new Error('Interest rate is required for approval');
+      error.status = 400;
+      return next(error);
+    }
+
+    const loan = await loanService.approveLoan(id, bankerId, notes, interestRate);
 
     res.status(200).json({
       success: true,
@@ -145,6 +151,54 @@ async function rejectLoan(req, res, next) {
   }
 }
 
+/**
+ * Disburse loan (BANKER only)
+ */
+async function disburseLoan(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { referenceId, notes } = req.body;
+    const bankerId = req.user.userId;
+
+    if (!referenceId) {
+      const error = new Error('Transaction reference ID is required');
+      error.status = 400;
+      return next(error);
+    }
+
+    const loan = await loanService.disburseLoan(id, bankerId, referenceId, notes);
+
+    res.status(200).json({
+      success: true,
+      data: loan,
+      message: 'Loan disbursed successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Cancel loan (Applicant/Merchant)
+ */
+async function cancelLoan(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+    const userId = req.user.userId;
+
+    const loan = await loanService.cancelLoan(id, userId, reason);
+
+    res.status(200).json({
+      success: true,
+      data: loan,
+      message: 'Loan cancelled successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 module.exports = {
   applyForLoan,
   getLoan,
@@ -152,4 +206,6 @@ module.exports = {
   assignBanker,
   approveLoan,
   rejectLoan,
+  disburseLoan,
+  cancelLoan,
 };

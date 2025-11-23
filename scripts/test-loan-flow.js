@@ -108,7 +108,7 @@ async function waitForServer(maxRetries = 20, delayMs = 500) {
     await post(`/loan/${loanId}/assign`, { bankerId }, bankerToken);
 
   console.log('5) Banker approves loan');
-  await post(`/loan/${loanId}/approve`, { notes: 'Looks good' }, bankerToken);
+  await post(`/loan/${loanId}/approve`, { notes: 'Looks good', interestRate: 12.5 }, bankerToken);
 
     console.log('6) Fetch loan');
     const loan = await get(`/loan/${loanId}`, merchantToken);

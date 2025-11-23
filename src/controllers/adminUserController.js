@@ -32,7 +32,7 @@ class AdminUserController {
         });
       }
 
-      const user = await adminUserService.updateUserStatus(id, status);
+      const user = await adminUserService.updateUserStatus(id, status, req.user.userId);
       res.json({
         success: true,
         data: user,

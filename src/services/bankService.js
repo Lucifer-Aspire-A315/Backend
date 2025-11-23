@@ -28,6 +28,28 @@ exports.updateBank = async (id, { name, loanTypeIds }) => {
 };
 
 exports.deleteBank = async (id) => {
+  // Check for dependencies before deletion
+  const bank = await prisma.bank.findUnique({
+    where: { id },
+    include: {
+      _count: {
+        select: { bankers: true }
+      }
+    }
+  });
+
+  if (!bank) {
+    const error = new Error('Bank not found');
+    error.status = 404;
+    throw error;
+  }
+
+  if (bank._count.bankers > 0) {
+    const error = new Error('Cannot delete bank because it has active bankers associated with it.');
+    error.status = 409;
+    throw error;
+  }
+
   return prisma.bank.delete({ where: { id } });
 };
 // src/services/bankService.js

@@ -173,9 +173,9 @@ class AuthController {
         return next(error);
       }
 
-      // Block login if user is suspended/rejected
-      if (userFull.status === 'SUSPENDED' || userFull.status === 'REJECTED') {
-        const error = new Error('Account is suspended or rejected');
+      // Block login if user is suspended/rejected/deleted
+      if (userFull.status === 'SUSPENDED' || userFull.status === 'REJECTED' || userFull.status === 'DELETED') {
+        const error = new Error('Account is suspended, rejected, or deleted');
         error.status = 403;
         return next(error);
       }
@@ -290,6 +290,20 @@ class AuthController {
         await userService.revokeRefreshToken(refreshToken);
       }
       res.json({ success: true, message: 'Logged out successfully' });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/auth/change-password
+   * Change password for logged in user
+   */
+  async changePassword(req, res, next) {
+    try {
+      const { oldPassword, newPassword } = validate(validationSchemas.changePassword, req.body);
+      await userService.changePassword(req.user.userId, oldPassword, newPassword);
+      res.json({ success: true, message: 'Password changed successfully' });
     } catch (error) {
       next(error);
     }
