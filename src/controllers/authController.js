@@ -54,12 +54,7 @@ class AuthController {
    */
   async resetPassword(req, res, next) {
     try {
-      const { token, newPassword } = req.body;
-      if (!token || !newPassword) {
-        const error = new Error('Token and new password are required');
-        error.status = 400;
-        return next(error);
-      }
+      const { token, newPassword } = validate(validationSchemas.resetPassword, req.body);
       await userService.resetPassword(token, newPassword);
       res.json({ success: true, message: 'Password has been reset successfully.' });
     } catch (error) {
@@ -178,6 +173,13 @@ class AuthController {
         return next(error);
       }
 
+      // Block login if user is suspended/rejected
+      if (userFull.status === 'SUSPENDED' || userFull.status === 'REJECTED') {
+        const error = new Error('Account is suspended or rejected');
+        error.status = 403;
+        return next(error);
+      }
+
       // Block login if banker is not ACTIVE
       if (userFull.role === 'BANKER' && userFull.bankerProfile?.status !== 'ACTIVE') {
         const error = new Error('Your banker account is pending approval or suspended.');
@@ -186,7 +188,13 @@ class AuthController {
       }
 
       // Generate JWT token
-      const token = jwtUtil.generateAccessToken(user);
+      const accessToken = jwtUtil.generateAccessToken(user);
+      const refreshToken = jwtUtil.generateRefreshToken(user);
+
+      // Store refresh token
+      const refreshExpiresAt = new Date();
+      refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7); // 7 days
+      await userService.storeRefreshToken(user.id, refreshToken, refreshExpiresAt);
 
       // Response
       const response = {
@@ -199,7 +207,8 @@ class AuthController {
             email: user.email,
             role: user.role,
           },
-          token,
+          token: accessToken,
+          refreshToken,
         },
       };
 
@@ -210,6 +219,77 @@ class AuthController {
       });
 
       res.status(200).json(response);
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/auth/refresh-token
+   * Refresh access token using refresh token
+   */
+  async refreshToken(req, res, next) {
+    try {
+      const { refreshToken } = req.body;
+      if (!refreshToken) {
+        const error = new Error('Refresh token is required');
+        error.status = 400;
+        throw error;
+      }
+
+      // Verify signature
+      try {
+        jwtUtil.verifyRefreshToken(refreshToken);
+      } catch (err) {
+        const error = new Error('Invalid refresh token');
+        error.status = 401;
+        throw error;
+      }
+
+      // Verify in DB (check revocation)
+      const storedToken = await userService.validateRefreshToken(refreshToken);
+      if (!storedToken) {
+        const error = new Error('Invalid or revoked refresh token');
+        error.status = 401;
+        throw error;
+      }
+
+      // Generate new tokens (Rotation)
+      const user = storedToken.user;
+      const newAccessToken = jwtUtil.generateAccessToken(user);
+      const newRefreshToken = jwtUtil.generateRefreshToken(user);
+
+      // Revoke old token
+      await userService.revokeRefreshToken(refreshToken);
+
+      // Store new token
+      const refreshExpiresAt = new Date();
+      refreshExpiresAt.setDate(refreshExpiresAt.getDate() + 7);
+      await userService.storeRefreshToken(user.id, newRefreshToken, refreshExpiresAt);
+
+      res.json({
+        success: true,
+        data: {
+          token: newAccessToken,
+          refreshToken: newRefreshToken,
+        },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  /**
+   * POST /api/v1/auth/logout
+   * Logout user (revoke refresh token)
+   */
+  async logout(req, res, next) {
+    try {
+      const { refreshToken } = req.body;
+      if (refreshToken) {
+        await userService.revokeRefreshToken(refreshToken);
+      }
+      res.json({ success: true, message: 'Logged out successfully' });
     } catch (error) {
       next(error);
     }

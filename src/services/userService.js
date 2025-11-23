@@ -92,6 +92,10 @@ class UserService {
       }
       const saltRounds = 12;
       const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
+      
+      // Revoke all existing refresh tokens for security
+      await this.revokeAllRefreshTokens(user.id);
+
       await prisma.user.update({
         where: { id: user.id },
         data: {
@@ -391,6 +395,80 @@ class UserService {
       return user;
     } catch (error) {
       logger.error('Update User Profile Failed', { userId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Store a refresh token for a user
+   */
+  async storeRefreshToken(userId, token, expiresAt) {
+    try {
+      // Calculate expiry date based on '7d' or similar string if passed,
+      // but here we expect a Date object or we calculate it.
+      // The jwtUtil generates the token with an expiry, but we also need to store the expiry in DB.
+      // Let's assume expiresAt is a Date object.
+      
+      return await prisma.refreshToken.create({
+        data: {
+          userId,
+          token,
+          expiresAt,
+        },
+      });
+    } catch (error) {
+      logger.error('Store Refresh Token Failed', { userId, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Validate a refresh token (check existence and revocation)
+   */
+  async validateRefreshToken(token) {
+    try {
+      const storedToken = await prisma.refreshToken.findUnique({
+        where: { token },
+        include: { user: true },
+      });
+
+      if (!storedToken) return null;
+      if (storedToken.revoked) return null;
+      if (new Date() > storedToken.expiresAt) return null;
+
+      return storedToken;
+    } catch (error) {
+      logger.error('Validate Refresh Token Failed', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Revoke a refresh token
+   */
+  async revokeRefreshToken(token) {
+    try {
+      await prisma.refreshToken.update({
+        where: { token },
+        data: { revoked: true },
+      });
+    } catch (error) {
+      logger.error('Revoke Refresh Token Failed', { error: error.message });
+      throw error;
+    }
+  }
+
+  /**
+   * Revoke all refresh tokens for a user (e.g. on password reset or logout all)
+   */
+  async revokeAllRefreshTokens(userId) {
+    try {
+      await prisma.refreshToken.updateMany({
+        where: { userId, revoked: false },
+        data: { revoked: true },
+      });
+    } catch (error) {
+      logger.error('Revoke All Refresh Tokens Failed', { userId, error: error.message });
       throw error;
     }
   }

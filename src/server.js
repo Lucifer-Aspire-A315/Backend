@@ -79,6 +79,7 @@ app.use('/api/v1/admin/banks', require('./routes/bankAdmin'));
 app.use('/api/v1/kyc', kycRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
+app.use('/api/v1/admin/users', require('./routes/adminUsers'));
 app.use('/api/v1/profile', require('./routes/profile'));
 
 // Catch-all 404 for /api/v1 routes

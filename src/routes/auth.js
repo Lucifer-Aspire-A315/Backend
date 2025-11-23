@@ -32,4 +32,10 @@ router.post('/signup', authLimiter, authController.signup);
 // POST /api/v1/auth/login - User login
 router.post('/login', authLimiter, authController.login);
 
+// POST /api/v1/auth/refresh-token - Refresh access token
+router.post('/refresh-token', authLimiter, authController.refreshToken);
+
+// POST /api/v1/auth/logout - Logout user
+router.post('/logout', authLimiter, authController.logout);
+
 module.exports = router;

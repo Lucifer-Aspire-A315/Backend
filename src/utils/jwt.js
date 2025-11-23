@@ -35,6 +35,30 @@ class JWTUtil {
   }
 
   /**
+   * Generate refresh token
+   */
+  generateRefreshToken(user) {
+    try {
+      const payload = {
+        userId: user.id,
+        type: 'refresh',
+        jti: require('crypto').randomUUID(), // Ensure uniqueness
+      };
+
+      // Use a separate secret if available, otherwise fallback
+      const secret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+      const expiresIn = process.env.JWT_REFRESH_EXPIRES_IN || '7d';
+
+      const token = jwt.sign(payload, secret, { expiresIn });
+
+      return token;
+    } catch (error) {
+      logger.error('Refresh Token Generation Failed', { userId: user.id, error: error.message });
+      throw error;
+    }
+  }
+
+  /**
    * Verify token and extract user info
    */
   verifyToken(token) {
@@ -45,6 +69,20 @@ class JWTUtil {
       logger.warn('JWT Verification Failed', { error: error.message });
 
       const jwtError = new Error('Invalid or expired token');
+      jwtError.status = 401;
+      throw jwtError;
+    }
+  }
+
+  /**
+   * Verify refresh token
+   */
+  verifyRefreshToken(token) {
+    try {
+      const secret = process.env.JWT_REFRESH_SECRET || process.env.JWT_SECRET;
+      return jwt.verify(token, secret);
+    } catch (error) {
+      const jwtError = new Error('Invalid or expired refresh token');
       jwtError.status = 401;
       throw jwtError;
     }

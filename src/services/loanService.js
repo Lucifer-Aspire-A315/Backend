@@ -269,7 +269,24 @@ class LoanService {
     } else if (userRole === 'CUSTOMER') {
       where.applicantId = userId;
     } else if (userRole === 'BANKER') {
-      where.OR = [{ bankerId: userId }, { bankerId: null }];
+      // Fetch banker's pincode to filter unassigned loans
+      const banker = await prisma.bankerProfile.findUnique({ where: { userId } });
+      const bankerPincode = banker?.pincode;
+
+      where.OR = [
+        { bankerId: userId }, // Assigned to me
+        { 
+          bankerId: null, // Unassigned
+          // AND: Applicant is in my area (if pincode exists)
+          ...(bankerPincode ? {
+            applicant: {
+              customerProfile: {
+                pincode: bankerPincode
+              }
+            }
+          } : {})
+        }
+      ];
     }
     // ADMIN sees all
 

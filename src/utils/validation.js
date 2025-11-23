@@ -1,5 +1,16 @@
 const Joi = require('joi');
 
+const passwordSchema = Joi.string()
+  .min(8)
+  .pattern(new RegExp('^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#\\$%\\^&\\*])'))
+  .required()
+  .messages({
+    'string.min': 'Password must be at least 8 characters long',
+    'string.pattern.base':
+      'Password must contain at least one uppercase letter, one lowercase letter, one number, and one special character (!@#$%^&*)',
+    'any.required': 'Password is required',
+  });
+
 const signupCustomerSchema = Joi.object({
   name: Joi.string().trim().min(2).max(100).required(),
   email: Joi.string()
@@ -8,7 +19,7 @@ const signupCustomerSchema = Joi.object({
   phone: Joi.string()
     .pattern(/^[6-9]\d{9}$/)
     .required(),
-  password: Joi.string().min(8).required(),
+  password: passwordSchema,
   address: Joi.string().max(255).optional().allow(''),
   pincode: Joi.string()
     .pattern(/^\d{6}$/)
@@ -25,7 +36,7 @@ const signupMerchantSchema = Joi.object({
   phone: Joi.string()
     .pattern(/^[6-9]\d{9}$/)
     .required(),
-  password: Joi.string().min(8).required(),
+  password: passwordSchema,
   businessName: Joi.string().min(2).max(100).required(),
   gstNumber: Joi.string().max(20).optional().allow(''),
   address: Joi.string().max(255).optional().allow(''),
@@ -44,7 +55,7 @@ const signupBankerSchema = Joi.object({
   phone: Joi.string()
     .pattern(/^[6-9]\d{9}$/)
     .required(),
-  password: Joi.string().min(8).required(),
+  password: passwordSchema,
   bankId: Joi.string().uuid().required(),
   branch: Joi.string().max(100).required(),
   pincode: Joi.string()
@@ -67,10 +78,14 @@ const validationSchemas = {
         'string.email': 'Please enter a valid email address',
         'any.required': 'Email is required',
       }),
-    password: Joi.string().min(8).required().messages({
-      'string.min': 'Password must be at least 8 characters long',
+    password: Joi.string().required().messages({
       'any.required': 'Password is required',
     }),
+  }),
+
+  resetPassword: Joi.object({
+    token: Joi.string().required(),
+    newPassword: passwordSchema,
   }),
 
   // Loan schemas

@@ -19,6 +19,13 @@ model Bank {
   updatedAt DateTime    @updatedAt
 }
 
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+  REJECTED
+}
+
 model User {
   id                            String              @id @default(uuid())
   name                          String
@@ -26,6 +33,7 @@ model User {
   phone                         String              @unique
   passwordHash                  String
   role                          Role
+  status                        UserStatus          @default(ACTIVE)
   loans                         Loan[]
   merchantLoans                 Loan[]              @relation("MerchantLoans")
   bankerLoans                   Loan[]              @relation("BankerLoans")
@@ -43,6 +51,7 @@ model User {
   bankerProfile                 BankerProfile?
   documents                     Document[]
   updatedLoanStatuses           LoanStatusHistory[] @relation("UserUpdatedLoanStatuses")
+  refreshTokens                 RefreshToken[]
 }
 
 model BankerProfile {
@@ -198,6 +207,16 @@ model KYCAuditLog {
   actorId   String?
   details   String?
   createdAt DateTime    @default(now())
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
 }
 
 enum Role {
