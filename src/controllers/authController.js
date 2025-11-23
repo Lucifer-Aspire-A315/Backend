@@ -178,6 +178,13 @@ class AuthController {
         return next(error);
       }
 
+      // Block login if banker is not ACTIVE
+      if (userFull.role === 'BANKER' && userFull.bankerProfile?.status !== 'ACTIVE') {
+        const error = new Error('Your banker account is pending approval or suspended.');
+        error.status = 403;
+        return next(error);
+      }
+
       // Generate JWT token
       const token = jwtUtil.generateAccessToken(user);
 

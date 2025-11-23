@@ -438,8 +438,15 @@ class KYCService {
    */
   async createKYCAuditLog(kycDocId, action, actorId, details = '') {
     try {
-      // AuditLog model requires a loanId; KYC docs are not tied to a specific loan.
-      // For now, we log to application logs and skip DB audit to avoid schema violations.
+      await prisma.kYCAuditLog.create({
+        data: {
+          kycDocId,
+          action,
+          actorId,
+          details,
+        },
+      });
+      
       logger.debug('KYC Audit Event', {
         kycDocId,
         action,

@@ -259,6 +259,9 @@ class UserService {
           role: true,
           name: true,
           isEmailVerified: true,
+          bankerProfile: {
+            select: { status: true },
+          },
         },
       });
 

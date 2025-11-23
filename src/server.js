@@ -10,6 +10,8 @@ const authRoutes = require('./routes/auth'); // ✅ New import
 const uploadRoutes = require('./routes/uploads');
 const loanRoutes = require('./routes/loan');
 const kycRoutes = require('./routes/kyc');
+const notificationRoutes = require('./routes/notifications');
+const dashboardRoutes = require('./routes/dashboard');
 const { loggerMiddleware } = require('./middleware/logger');
 const correlationId = require('./middleware/correlationId');
 const { metricsMiddleware, metricsHandler } = require('./middleware/metrics');
@@ -64,10 +66,10 @@ app.use('/api/v1', (req, res, next) => {
   next();
 });
 
-// ✅ ROUTES - Add auth routes
+// ROUTES - Add auth routes
 app.use('/api/v1/health', healthRoutes);
 app.get('/api/v1/metrics', metricsHandler);
-app.use('/api/v1/auth', authRoutes); // ✅ New auth routes
+app.use('/api/v1/auth', authRoutes); // 
 app.use('/api/v1/uploads', uploadRoutes);
 app.use('/api/v1/loan', loanRoutes);
 
@@ -75,6 +77,8 @@ app.use('/api/v1/loan-types', require('./routes/loanType'));
 app.use('/api/v1/banks', require('./routes/bank'));
 app.use('/api/v1/admin/banks', require('./routes/bankAdmin'));
 app.use('/api/v1/kyc', kycRoutes);
+app.use('/api/v1/notifications', notificationRoutes);
+app.use('/api/v1/dashboard', dashboardRoutes);
 app.use('/api/v1/profile', require('./routes/profile'));
 
 // Catch-all 404 for /api/v1 routes

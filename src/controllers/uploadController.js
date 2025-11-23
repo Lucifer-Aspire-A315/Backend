@@ -1,7 +1,20 @@
 const prisma = require('../lib/prisma');
 const { logger } = require('../middleware/logger');
+const documentService = require('../services/documentService');
 
 class UploadController {
+  // Generate signature for client-side upload
+  async getUploadSignature(req, res, next) {
+    try {
+      const { public_id, folder } = req.query;
+      const config = documentService.generateUploadSignature(folder, public_id);
+      res.json(config);
+    } catch (err) {
+      logger.error('Upload sign failed', { error: err && err.message });
+      next(err);
+    }
+  }
+
   // Register a file uploaded to Cloudinary and link it to a loan
   async registerLoanDocument(req, res, next) {
     try {
@@ -32,24 +45,17 @@ class UploadController {
         return next(err);
       }
 
-      const doc = await prisma.document.create({
-        data: {
-          loanId,
-          publicId,
-          secureUrl,
-          url: secureUrl,
-          filename: filename || null,
-          fileType: fileType || null,
-          bytes: bytes ? Number(bytes) : null,
-          uploaderId: userId,
-          type: type || 'attachment',
-        },
+      const doc = await documentService.registerLoanDocument(loanId, userId, {
+        publicId,
+        secureUrl,
+        filename,
+        fileType,
+        bytes,
+        type
       });
 
-      logger.info('Loan document registered', { loanId, documentId: doc.id, uploaderId: userId });
       res.status(201).json({ success: true, document: doc });
     } catch (err) {
-      logger.error('registerLoanDocument failed', { error: err && err.message });
       next(err);
     }
   }

@@ -529,14 +529,46 @@ class LoanService {
   }
 
   /**
-   * Notification helpers (stubs for future implementation)
+   * Notification helpers
    */
   async notifyLoanApproval(loan) {
-    logger.info('TODO: Send loan approval notification', { loanId: loan.id });
+    const notificationService = require('./notificationService');
+    
+    // Notify Applicant
+    await notificationService.createNotification(
+      loan.applicantId,
+      'LOAN_APPROVED',
+      `Your loan application for ${loan.amount} has been approved.`
+    );
+
+    // Notify Merchant (if different from applicant)
+    if (loan.merchantId !== loan.applicantId) {
+      await notificationService.createNotification(
+        loan.merchantId,
+        'LOAN_APPROVED',
+        `Loan application for ${loan.applicant.name} has been approved.`
+      );
+    }
   }
 
   async notifyLoanRejection(loan, reason) {
-    logger.info('TODO: Send loan rejection notification', { loanId: loan.id, reason });
+    const notificationService = require('./notificationService');
+
+    // Notify Applicant
+    await notificationService.createNotification(
+      loan.applicantId,
+      'LOAN_REJECTED',
+      `Your loan application has been rejected. Reason: ${reason}`
+    );
+
+    // Notify Merchant (if different from applicant)
+    if (loan.merchantId !== loan.applicantId) {
+      await notificationService.createNotification(
+        loan.merchantId,
+        'LOAN_REJECTED',
+        `Loan application for ${loan.applicant.name} has been rejected.`
+      );
+    }
   }
 }
 

@@ -1,12 +1,3 @@
-model Bank {
-  id        String      @id @default(uuid())
-  name      String      @unique
-  loanTypes LoanType[]  @relation("BankLoanTypes")
-  bankers   BankerProfile[]
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
-}
-
 // RN Fintech - Prisma Schema (Draft)
 // Database: PostgreSQL
 // ORM: Prisma
@@ -17,46 +8,54 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+}
+
+model Bank {
+  id        String      @id @default(uuid())
+  name      String      @unique
+  loanTypes LoanType[]  @relation("BankLoanTypes")
+  bankers   BankerProfile[]
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
 }
 
 model User {
-  id            String   @id @default(uuid())
-  name          String
-  email         String   @unique
-  phone         String   @unique
-  passwordHash  String
-  role          Role
-  loans         Loan[]
-  merchantLoans Loan[]   @relation("MerchantLoans")
-  bankerLoans   Loan[]   @relation("BankerLoans")
-  kycDocs       KYCDocument[]
-  notifications Notification[]
-  isEmailVerified Boolean @default(false)
-  emailVerificationToken String?
+  id                            String              @id @default(uuid())
+  name                          String
+  email                         String              @unique
+  phone                         String              @unique
+  passwordHash                  String
+  role                          Role
+  loans                         Loan[]
+  merchantLoans                 Loan[]              @relation("MerchantLoans")
+  bankerLoans                   Loan[]              @relation("BankerLoans")
+  kycDocs                       KYCDocument[]
+  notifications                 Notification[]
+  isEmailVerified               Boolean             @default(false)
+  emailVerificationToken        String?
   emailVerificationTokenExpires DateTime?
-  passwordResetToken String?
-  passwordResetTokenExpires DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  merchantProfile MerchantProfile?
-  customerProfile CustomerProfile?
-  bankerProfile   BankerProfile?
-  documents        Document[]
-  updatedLoanStatuses LoanStatusHistory[] @relation("UserUpdatedLoanStatuses")
+  passwordResetToken            String?
+  passwordResetTokenExpires     DateTime?
+  createdAt                     DateTime            @default(now())
+  updatedAt                     DateTime            @updatedAt
+  merchantProfile               MerchantProfile?
+  customerProfile               CustomerProfile?
+  bankerProfile                 BankerProfile?
+  documents                     Document[]
+  updatedLoanStatuses           LoanStatusHistory[] @relation("UserUpdatedLoanStatuses")
 }
 
 model BankerProfile {
-  userId        String   @id
-  user          User     @relation(fields: [userId], references: [id])
-  bankId        String
-  bank          Bank     @relation(fields: [bankId], references: [id])
-  branch        String
-  pincode       String
-  employeeId    String?
-  status        BankerStatus @default(PENDING)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  userId     String       @id
+  user       User         @relation(fields: [userId], references: [id])
+  bankId     String
+  bank       Bank         @relation(fields: [bankId], references: [id])
+  branch     String
+  pincode    String
+  employeeId String?
+  status     BankerStatus @default(PENDING)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
 }
 
 enum BankerStatus {
@@ -66,26 +65,26 @@ enum BankerStatus {
 }
 
 model Loan {
-  id          String   @id @default(uuid())
-  loanTypeId   String?
-  loanType     LoanType? @relation(fields: [loanTypeId], references: [id])
-  amount       Decimal  @db.Decimal(18,2)
-  tenorMonths  Int?
-  interestRate Decimal? @db.Decimal(5,2)
-  status       LoanStatus @default(SUBMITTED)
-  kycStatus    KYCStatus  @default(PENDING)
-  metadata     Json       @default("{}")
-  applicant    User     @relation(fields: [applicantId], references: [id])
-  applicantId  String
-  merchant     User?    @relation("MerchantLoans", fields: [merchantId], references: [id])
-  merchantId   String?
-  banker       User?    @relation("BankerLoans", fields: [bankerId], references: [id])
-  bankerId     String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  auditLogs    AuditLog[]
+  id            String              @id @default(uuid())
+  loanTypeId    String?
+  loanType      LoanType?           @relation(fields: [loanTypeId], references: [id])
+  amount        Decimal             @db.Decimal(18, 2)
+  tenorMonths   Int?
+  interestRate  Decimal?            @db.Decimal(5, 2)
+  status        LoanStatus          @default(SUBMITTED)
+  kycStatus     KYCStatus           @default(PENDING)
+  metadata      Json                @default("{}")
+  applicant     User                @relation(fields: [applicantId], references: [id])
+  applicantId   String
+  merchant      User?               @relation("MerchantLoans", fields: [merchantId], references: [id])
+  merchantId    String?
+  banker        User?               @relation("BankerLoans", fields: [bankerId], references: [id])
+  bankerId      String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  auditLogs     AuditLog[]
   statusHistory LoanStatusHistory[]
-  documents      Document[]
+  documents     Document[]
 
   @@index([merchantId])
   @@index([applicantId])
@@ -93,83 +92,83 @@ model Loan {
 }
 
 model LoanType {
-  id          String    @id @default(uuid())
-  name        String    @unique
-  code        String?   @unique
+  id          String   @id @default(uuid())
+  name        String   @unique
+  code        String?  @unique
   description String?
-  schema      Json      @default("{}")
+  schema      Json     @default("{}")
   loans       Loan[]
-  banks       Bank[]    @relation("BankLoanTypes")
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  banks       Bank[]   @relation("BankLoanTypes")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model LoanStatusHistory {
-  id        String     @id @default(uuid())
-  loan      Loan       @relation(fields: [loanId], references: [id])
-  loanId    String
-  status    LoanStatus
-  updatedBy User       @relation("UserUpdatedLoanStatuses", fields: [updatedById], references: [id])
+  id          String     @id @default(uuid())
+  loan        Loan       @relation(fields: [loanId], references: [id])
+  loanId      String
+  status      LoanStatus
+  updatedBy   User       @relation("UserUpdatedLoanStatuses", fields: [updatedById], references: [id])
   updatedById String
-  note      String?
-  createdAt DateTime   @default(now())
+  note        String?
+  createdAt   DateTime   @default(now())
 }
 
 model MerchantProfile {
-  id        String   @id @default(uuid())
-  user      User     @relation(fields: [userId], references: [id])
-  userId    String   @unique
+  id           String            @id @default(uuid())
+  user         User              @relation(fields: [userId], references: [id])
+  userId       String            @unique
   businessName String
-  gstNumber String?
-  address   String?
-  pincode   String?
-  customers CustomerProfile[]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  gstNumber    String?
+  address      String?
+  pincode      String?
+  customers    CustomerProfile[]
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
 }
 
 model CustomerProfile {
-  id        String   @id @default(uuid())
-  user      User     @relation(fields: [userId], references: [id])
-  userId    String   @unique
-  merchant  MerchantProfile? @relation(fields: [merchantId], references: [id])
+  id         String           @id @default(uuid())
+  user       User             @relation(fields: [userId], references: [id])
+  userId     String           @unique
+  merchant   MerchantProfile? @relation(fields: [merchantId], references: [id])
   merchantId String?
-  address   String?
-  pincode   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  address    String?
+  pincode    String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
 }
 
 model Document {
-  id        String   @id @default(uuid())
-  user      User?    @relation(fields: [userId], references: [id])
-  userId    String?
-  loan      Loan?    @relation(fields: [loanId], references: [id])
-  loanId    String?
-  type      String
-  publicId  String?
-  secureUrl String?
-  url       String?
-  filename  String?
-  fileType  String?
-  bytes     Int?
+  id         String   @id @default(uuid())
+  user       User?    @relation(fields: [userId], references: [id])
+  userId     String?
+  loan       Loan?    @relation(fields: [loanId], references: [id])
+  loanId     String?
+  type       String
+  publicId   String?
+  secureUrl  String?
+  url        String?
+  filename   String?
+  fileType   String?
+  bytes      Int?
   uploaderId String?
-  status    String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  status     String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
 
 model KYCDocument {
-  id        String    @id @default(uuid())
-  type      String
-  url       String?
-  status    KYCStatus @default(PENDING)
-  userId    String
-  user      User      @relation(fields: [userId], references: [id])
+  id         String        @id @default(uuid())
+  type       String
+  url        String?
+  status     KYCStatus     @default(PENDING)
+  userId     String
+  user       User          @relation(fields: [userId], references: [id])
   verifiedBy String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  auditLogs KYCAuditLog[]
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  auditLogs  KYCAuditLog[]
 }
 
 model Notification {
