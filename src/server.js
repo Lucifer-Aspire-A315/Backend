@@ -22,6 +22,7 @@ const notFound = require('./middleware/notFound');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+
 // Winston logger instance
 const { logger } = require('./middleware/logger');
 
@@ -29,7 +30,7 @@ const { logger } = require('./middleware/logger');
 app.use(helmet());
 app.use(
   cors({
-    origin: ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:8080'],
+    origin: ['http://localhost:3000', 'http://localhost:53988', 'http://localhost:50369'],
     credentials: true,
   }),
 );
