@@ -30,11 +30,11 @@ const { logger } = require('./middleware/logger');
 app.use(helmet());
 app.use(
   cors({
-    origin: ['http://localhost:3000', 'http://localhost:53988', 'http://localhost:50369'],
+    origin: ['http://localhost:3000', 'http://localhost:50615', 'http://localhost:50369'],
     credentials: true,
   }),
 );
-
+  
 // Correlation ID must come early
 app.use(correlationId);
 
