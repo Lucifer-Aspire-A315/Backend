@@ -1,13 +1,20 @@
 module.exports = {
-  root: true,
   env: {
-    es2021: true,
     node: true,
+    es2021: true,
   },
   parserOptions: {
-    ecmaVersion: 2021,
+    ecmaVersion: 'latest',
     sourceType: 'script',
   },
+  overrides: [
+    {
+      files: ['prisma.config.cjs'],
+      env: {
+        node: true,
+      },
+    },
+  ],
   extends: [
     'eslint:recommended',
     'plugin:promise/recommended',

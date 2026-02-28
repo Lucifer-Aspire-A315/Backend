@@ -1,7 +1,7 @@
 const { authenticator } = require('otplib');
 const qrcode = require('qrcode');
 const { logger } = require('../middleware/logger');
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 
 class TwoFactorService {
   constructor() {

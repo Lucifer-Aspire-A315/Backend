@@ -1,4 +1,4 @@
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 const bcrypt = require('bcryptjs');
 const { logger } = require('../middleware/logger');
 const { generateToken, getTokenExpiry, hashToken } = require('../utils/emailVerification');

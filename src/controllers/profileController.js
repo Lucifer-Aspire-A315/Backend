@@ -1,5 +1,5 @@
 const { logger } = require('../middleware/logger');
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 const { validate, validationSchemas } = require('../utils/validation');
 
 // Helper: get profile model and fields by role

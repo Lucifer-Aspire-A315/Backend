@@ -1,4 +1,4 @@
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 
 exports.createBank = async ({ name, loanTypeIds }) => {
   return prisma.bank.create({

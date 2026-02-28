@@ -1,12 +1,10 @@
+// Load environment variables first
 require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
 
 // Import routes and middleware
 const healthRoutes = require('./routes/health');
-const authRoutes = require('./routes/auth'); // ✅ New import
+const authRoutes = require('./routes/auth');
+const { prisma } = require('./lib/prisma');
 const uploadRoutes = require('./routes/uploads');
 const loanRoutes = require('./routes/loan');
 const kycRoutes = require('./routes/kyc');
@@ -17,20 +15,21 @@ const correlationId = require('./middleware/correlationId');
 const { metricsMiddleware, metricsHandler } = require('./middleware/metrics');
 const errorHandler = require('./middleware/errorHandler');
 const notFound = require('./middleware/notFound');
+const { logger } = require('./middleware/logger');
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const morgan = require('morgan');
 
 // Create Express app
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-
-// Winston logger instance
-const { logger } = require('./middleware/logger');
-
 // Security middleware
 app.use(helmet());
 app.use(
   cors({
-    origin: ['http://localhost:3000', 'http://localhost:50615', 'http://localhost:50369'],
+    origin: ['http://localhost:3000', 'http://localhost:52615', 'http://localhost:50369'],
     credentials: true,
   }),
 );
@@ -88,12 +87,10 @@ app.use('/api/v1', (req, res, next) => {
   notFound(req, res, next);
 });
 
-// Global error handler (must be LAST)
 app.use(errorHandler);
 
 const startServer = async () => {
   try {
-    // Validate critical environment variables in production
     const validateEnv = () => {
       if (process.env.NODE_ENV !== 'production') return;
 
@@ -104,7 +101,6 @@ const startServer = async () => {
         process.exit(1);
       }
 
-      // Email provider: require either RESEND_API_KEY+EMAIL_FROM or SMTP settings
       const hasResend = !!process.env.RESEND_API_KEY && !!process.env.EMAIL_FROM;
       const hasSmtp =
         !!process.env.SMTP_HOST &&
@@ -120,7 +116,6 @@ const startServer = async () => {
     };
     validateEnv();
     // Test DB connection via Prisma
-    const prisma = require('./lib/prisma');
     await prisma.$connect();
 
     logger.info('Database Connection', {
@@ -132,7 +127,6 @@ const startServer = async () => {
       tables: ['User', 'Loan', 'KYCDocument', 'Notification', 'AuditLog'],
     });
 
-    // keep the shared prisma client connected for the app lifetime
 
     // Start server
     const server = app.listen(PORT, 'localhost', () => {
@@ -207,7 +201,7 @@ const startServer = async () => {
       error: error.message,
       code: error.code,
     });
-    logger.error('❌ Failed to start server', { error: error && (error.stack || error.message) });
+    logger.error('Failed to start server', { error: error && (error.stack || error.message) });
     process.exit(1);
   }
 };

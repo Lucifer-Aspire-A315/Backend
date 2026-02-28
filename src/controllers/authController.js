@@ -3,7 +3,7 @@ const jwtUtil = require('../utils/jwt');
 const { validationSchemas, validate } = require('../utils/validation');
 const { logger } = require('../middleware/logger');
 const twoFactorService = require('../services/twoFactorService');
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 const emailSender = require('../utils/emailSender');
 
 class AuthController {
