@@ -9,13 +9,21 @@ const ajv = new Ajv({ allErrors: true });
 addFormats(ajv);
 
 class LoanService {
+  normalizeAssignmentRequests(metadata) {
+    const current = metadata && typeof metadata === 'object' ? { ...metadata } : {};
+    if (Array.isArray(current.assignmentRequests)) return current.assignmentRequests;
+    if (current.assignmentRequest && typeof current.assignmentRequest === 'object') {
+      return [current.assignmentRequest];
+    }
+    return [];
+  }
   /**
    * Apply for a loan (new comprehensive implementation)
    */
-  async applyForLoan(data, merchantId) {
-    const { applicant, loanTypeId, amount, tenorMonths, metadata = {}, documents = [] } = data;
+  async applyForLoan(data, actorId, actorRole) {
+    const { applicant = {}, loanTypeId, amount, tenorMonths, metadata = {}, documents = [] } = data;
 
-    logger.info('Applying for loan', { merchantId, loanTypeId, amount });
+    logger.info('Applying for loan', { actorId, actorRole, loanTypeId, amount });
 
     // Fetch loan type and validate
     const loanType = await prisma.loanType.findUnique({
@@ -59,30 +67,43 @@ class LoanService {
     }
 
     let customerId = null;
+    let merchantId = null;
 
-    // Handle applicant type
-    if (applicant.type === 'merchant') {
-      customerId = null;
-    } else if (applicant.type === 'existing') {
-      if (!applicant.customerId) {
-        const error = new Error('Customer ID required for existing customer');
+    if (actorRole === 'CUSTOMER') {
+      // Customers can only apply for themselves.
+      if (applicant.type && !['customer', 'self'].includes(applicant.type)) {
+        const error = new Error('Customers can only apply for themselves');
         error.status = 400;
         throw error;
       }
+      customerId = actorId;
+    } else if (actorRole === 'MERCHANT') {
+      merchantId = actorId;
+      const applicantType = applicant.type || 'merchant';
 
-      const customer = await prisma.user.findUnique({
-        where: { id: applicant.customerId },
-        include: { customerProfile: true },
-      });
+      // Handle merchant applicant type
+      if (applicantType === 'merchant') {
+        customerId = null;
+      } else if (applicantType === 'existing') {
+        if (!applicant.customerId) {
+          const error = new Error('Customer ID required for existing customer');
+          error.status = 400;
+          throw error;
+        }
 
-      if (!customer || customer.role !== 'CUSTOMER') {
-        const error = new Error('Customer not found');
-        error.status = 404;
-        throw error;
-      }
+        const customer = await prisma.user.findUnique({
+          where: { id: applicant.customerId },
+          include: { customerProfile: true },
+        });
 
-      customerId = customer.id;
-    } else if (applicant.type === 'new') {
+        if (!customer || customer.role !== 'CUSTOMER') {
+          const error = new Error('Customer not found');
+          error.status = 404;
+          throw error;
+        }
+
+        customerId = customer.id;
+      } else if (applicantType === 'new') {
       const { name, email, phone, address } = applicant.customer;
 
       if (!name || !email || !phone) {
@@ -162,8 +183,13 @@ class LoanService {
         customerId,
         email: normalizedEmail,
       });
+      } else {
+        const error = new Error('Invalid applicant type. Must be "merchant", "existing", or "new"');
+        error.status = 400;
+        throw error;
+      }
     } else {
-      const error = new Error('Invalid applicant type. Must be "merchant", "existing", or "new"');
+      const error = new Error('Only merchants or customers can apply for loans');
       error.status = 400;
       throw error;
     }
@@ -174,12 +200,12 @@ class LoanService {
         const publicId = doc.public_id || doc.publicId;
         if (!publicId) return false;
 
-        // Ownership check: publicId must start with merchantId (uploader) OR customerId (beneficiary)
-        const isMerchantDoc = publicId.startsWith(merchantId);
+        // Ownership check: publicId must start with actorId (uploader) OR customerId (beneficiary)
+        const isActorDoc = publicId.startsWith(actorId);
         const isCustomerDoc = customerId && publicId.startsWith(customerId);
 
-        if (!isMerchantDoc && !isCustomerDoc) {
-          logger.warn('Document ownership mismatch', { publicId, merchantId, customerId });
+        if (!isActorDoc && !isCustomerDoc) {
+          logger.warn('Document ownership mismatch', { publicId, actorId, customerId });
           return false;
         }
 
@@ -205,7 +231,7 @@ class LoanService {
         data: {
           loanTypeId,
           merchantId,
-          applicantId: customerId || merchantId,
+          applicantId: customerId || actorId,
           amount,
           tenorMonths,
           metadata,
@@ -230,7 +256,7 @@ class LoanService {
             fileType: doc.type || doc.fileType,
             type: doc.type || 'attachment',
             bytes: doc.bytes,
-            uploaderId: merchantId,
+            uploaderId: actorId,
           })),
         });
       }
@@ -240,7 +266,7 @@ class LoanService {
           entityType: 'LOAN',
           entityId: newLoan.id,
           action: 'LOAN_APPLIED',
-          actorId: merchantId,
+          actorId,
         },
       });
 
@@ -249,6 +275,7 @@ class LoanService {
 
     logger.info('Loan application created', {
       loanId: loan.id,
+      actorId,
       merchantId,
       applicantId: loan.applicantId,
     });
@@ -278,11 +305,14 @@ class LoanService {
     }
 
     // Access control
+    const bankerCanViewUnassigned =
+      userRole === 'BANKER' && !loan.bankerId && ['SUBMITTED', 'UNDER_REVIEW'].includes(loan.status);
     const hasAccess =
       userRole === 'ADMIN' ||
       loan.merchantId === userId ||
       loan.applicantId === userId ||
-      loan.bankerId === userId;
+      loan.bankerId === userId ||
+      bankerCanViewUnassigned;
 
     if (!hasAccess) {
       const error = new Error('Access denied');
@@ -319,23 +349,13 @@ class LoanService {
     } else if (userRole === 'CUSTOMER') {
       where.applicantId = userId;
     } else if (userRole === 'BANKER') {
-      // Fetch banker's pincode to filter unassigned loans
-      const banker = await prisma.bankerProfile.findUnique({ where: { userId } });
-      const bankerPincode = banker?.pincode;
-
+      // Bankers can see assigned-to-me and all unassigned active-stage loans.
       where.OR = [
-        { bankerId: userId }, // Assigned to me
-        { 
-          bankerId: null, // Unassigned
-          // AND: Applicant is in my area (if pincode exists)
-          ...(bankerPincode ? {
-            applicant: {
-              customerProfile: {
-                pincode: bankerPincode
-              }
-            }
-          } : {})
-        }
+        { bankerId: userId },
+        {
+          bankerId: null,
+          status: { in: ['SUBMITTED', 'UNDER_REVIEW'] },
+        },
       ];
     }
     // ADMIN sees all
@@ -345,22 +365,70 @@ class LoanService {
     if (bankerId) where.bankerId = bankerId;
 
     const skip = (page - 1) * limit;
+    let loans = [];
+    let total = 0;
 
-    const [loans, total] = await Promise.all([
-      prisma.loan.findMany({
-        where,
-        skip,
-        take: limit,
-        orderBy: { createdAt: 'desc' },
-        include: {
-          loanType: true,
-          merchant: { select: { id: true, name: true, email: true } },
-          applicant: { select: { id: true, name: true, email: true, role: true } },
-          banker: { select: { id: true, name: true, email: true } },
+    const include = {
+      loanType: true,
+      merchant: { select: { id: true, name: true, email: true } },
+      applicant: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          role: true,
+          customerProfile: { select: { pincode: true } },
+          merchantProfile: { select: { pincode: true } },
         },
-      }),
-      prisma.loan.count({ where }),
-    ]);
+      },
+      banker: { select: { id: true, name: true, email: true } },
+    };
+
+    if (userRole === 'BANKER') {
+      const banker = await prisma.bankerProfile.findUnique({ where: { userId } });
+      const bankerPincode = banker?.pincode || null;
+
+      const all = await prisma.loan.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include,
+      });
+
+      const ranked = all
+        .map((loan) => {
+          const applicantPincode =
+            loan.applicant?.customerProfile?.pincode ||
+            loan.applicant?.merchantProfile?.pincode ||
+            null;
+          const isPincodeMatch = !!bankerPincode && !!applicantPincode && applicantPincode === bankerPincode;
+          let rank = 3;
+          if (isPincodeMatch && loan.bankerId === null) rank = 0;
+          else if (loan.bankerId === userId) rank = 1;
+          else if (loan.bankerId === null) rank = 2;
+          return { loan, rank };
+        })
+        .sort((a, b) => {
+          if (a.rank !== b.rank) return a.rank - b.rank;
+          return new Date(b.loan.createdAt).getTime() - new Date(a.loan.createdAt).getTime();
+        })
+        .map((x) => x.loan);
+
+      total = ranked.length;
+      loans = ranked.slice(skip, skip + limit);
+    } else {
+      const [rows, count] = await Promise.all([
+        prisma.loan.findMany({
+          where,
+          skip,
+          take: limit,
+          orderBy: { createdAt: 'desc' },
+          include,
+        }),
+        prisma.loan.count({ where }),
+      ]);
+      loans = rows;
+      total = count;
+    }
 
     // Enrich each loan with KYC readiness
     const kycService = require('./kycService');
@@ -421,11 +489,36 @@ class LoanService {
     }
 
     const updatedLoan = await prisma.$transaction(async (tx) => {
+      const metadata = loan.metadata && typeof loan.metadata === 'object' ? { ...loan.metadata } : {};
+      const requests = this.normalizeAssignmentRequests(metadata).map((r) => {
+        if (r && r.bankerId === bankerId && r.status === 'PENDING') {
+          return {
+            ...r,
+            status: 'APPROVED',
+            decisionBy: assignedBy,
+            decisionAt: new Date().toISOString(),
+            decisionNotes: 'Assigned by admin',
+          };
+        }
+        if (r && r.status === 'PENDING') {
+          return {
+            ...r,
+            status: 'AUTO_CANCELLED',
+            decisionBy: assignedBy,
+            decisionAt: new Date().toISOString(),
+            decisionNotes: 'Already assigned to another banker',
+          };
+        }
+        return r;
+      });
+      metadata.assignmentRequests = requests;
+
       const updated = await tx.loan.update({
         where: { id: loanId },
         data: {
           bankerId,
           status: 'UNDER_REVIEW',
+          metadata,
         },
         include: {
           loanType: true,
@@ -450,6 +543,218 @@ class LoanService {
     return updatedLoan;
   }
 
+  async requestAssignment(loanId, bankerId, note, proposedInterestRate) {
+    const loan = await prisma.loan.findUnique({
+      where: { id: loanId },
+      include: {
+        applicant: { select: { id: true, name: true } },
+        merchant: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!loan) {
+      const error = new Error('Loan not found');
+      error.status = 404;
+      throw error;
+    }
+    if (loan.bankerId) {
+      const error = new Error('Loan is already assigned to a banker');
+      error.status = 400;
+      throw error;
+    }
+    if (!['SUBMITTED', 'UNDER_REVIEW'].includes(loan.status)) {
+      const error = new Error('Loan is not open for assignment requests');
+      error.status = 400;
+      throw error;
+    }
+
+    const banker = await prisma.user.findUnique({
+      where: { id: bankerId },
+      include: { bankerProfile: true },
+    });
+    if (!banker || banker.role !== 'BANKER') {
+      const error = new Error('Banker not found');
+      error.status = 404;
+      throw error;
+    }
+
+    const metadata = loan.metadata && typeof loan.metadata === 'object' ? { ...loan.metadata } : {};
+    const requests = this.normalizeAssignmentRequests(metadata);
+    const existingRequest = requests.find((r) => r && r.bankerId === bankerId && r.status === 'PENDING');
+    if (existingRequest) {
+      const error = new Error('A pending assignment request already exists');
+      error.status = 409;
+      throw error;
+    }
+
+    requests.push({
+      bankerId,
+      bankerName: banker.name,
+      note: note || '',
+      proposedInterestRate: Number(proposedInterestRate),
+      status: 'PENDING',
+      requestedAt: new Date().toISOString(),
+    });
+    metadata.assignmentRequests = requests;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const row = await tx.loan.update({
+        where: { id: loanId },
+        data: { metadata },
+        include: {
+          loanType: true,
+          merchant: { select: { id: true, name: true, email: true } },
+          applicant: { select: { id: true, name: true, email: true } },
+          banker: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          entityType: 'LOAN',
+          entityId: loanId,
+          action: 'BANKER_ASSIGNMENT_REQUESTED',
+          actorId: bankerId,
+          details: note || '',
+        },
+      });
+      return row;
+    });
+
+    const notificationService = require('./notificationService');
+    if (loan.applicantId) {
+      await notificationService.createNotification(
+        loan.applicantId,
+        'BANKER_ASSIGNMENT_REQUEST',
+        `${banker.name} requested assignment for your loan.`,
+      );
+    }
+    if (loan.merchantId && loan.merchantId !== loan.applicantId) {
+      await notificationService.createNotification(
+        loan.merchantId,
+        'BANKER_ASSIGNMENT_REQUEST',
+        `${banker.name} requested assignment for loan ${loan.id.slice(0, 8)}.`,
+      );
+    }
+
+    return updated;
+  }
+
+  async assignmentDecision(loanId, actorId, actorRole, targetBankerId, approve, notes) {
+    const loan = await prisma.loan.findUnique({
+      where: { id: loanId },
+      include: {
+        applicant: { select: { id: true, name: true } },
+        merchant: { select: { id: true, name: true } },
+      },
+    });
+
+    if (!loan) {
+      const error = new Error('Loan not found');
+      error.status = 404;
+      throw error;
+    }
+
+    const isOwner = loan.applicantId === actorId || loan.merchantId === actorId || actorRole === 'ADMIN';
+    if (!isOwner) {
+      const error = new Error('Not authorized to decide assignment request');
+      error.status = 403;
+      throw error;
+    }
+
+    const metadata = loan.metadata && typeof loan.metadata === 'object' ? { ...loan.metadata } : {};
+    const requests = this.normalizeAssignmentRequests(metadata);
+    const requestIndex = requests.findIndex(
+      (r) => r && r.bankerId === targetBankerId && r.status === 'PENDING',
+    );
+    if (requestIndex === -1) {
+      const error = new Error('No pending assignment request found');
+      error.status = 400;
+      throw error;
+    }
+    const request = requests[requestIndex];
+
+    const updatedRequest = {
+      ...request,
+      status: approve ? 'APPROVED' : 'REJECTED',
+      decisionBy: actorId,
+      decisionAt: new Date().toISOString(),
+      decisionNotes: notes || '',
+    };
+    requests[requestIndex] = updatedRequest;
+    if (approve) {
+      for (let i = 0; i < requests.length; i += 1) {
+        if (i === requestIndex) continue;
+        const r = requests[i];
+        if (r && r.status === 'PENDING') {
+          requests[i] = {
+            ...r,
+            status: 'AUTO_CANCELLED',
+            decisionBy: actorId,
+            decisionAt: new Date().toISOString(),
+            decisionNotes: 'Already assigned to another banker',
+          };
+        }
+      }
+    }
+    metadata.assignmentRequests = requests;
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const row = await tx.loan.update({
+        where: { id: loanId },
+        data: {
+          bankerId: approve ? request.bankerId : null,
+          status: approve && loan.status === 'SUBMITTED' ? 'UNDER_REVIEW' : loan.status,
+          interestRate: approve ? request.proposedInterestRate : loan.interestRate,
+          metadata,
+        },
+        include: {
+          loanType: true,
+          merchant: { select: { id: true, name: true, email: true } },
+          applicant: { select: { id: true, name: true, email: true } },
+          banker: { select: { id: true, name: true, email: true } },
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          entityType: 'LOAN',
+          entityId: loanId,
+          action: approve ? 'BANKER_ASSIGNMENT_APPROVED' : 'BANKER_ASSIGNMENT_REJECTED',
+          actorId,
+          details: notes || '',
+        },
+      });
+      return row;
+    });
+
+    const notificationService = require('./notificationService');
+    if (request.bankerId) {
+      await notificationService.createNotification(
+        request.bankerId,
+        approve ? 'BANKER_ASSIGNMENT_APPROVED' : 'BANKER_ASSIGNMENT_REJECTED',
+        approve
+          ? `Your assignment request for loan ${loan.id.slice(0, 8)} was approved.`
+          : `Your assignment request for loan ${loan.id.slice(0, 8)} was rejected.`,
+      );
+    }
+
+    if (approve) {
+      const cancelled = requests.filter(
+        (r) => r && r.bankerId !== request.bankerId && r.status === 'AUTO_CANCELLED',
+      );
+      for (const c of cancelled) {
+        await notificationService.createNotification(
+          c.bankerId,
+          'BANKER_ASSIGNMENT_CANCELLED',
+          `Loan ${loan.id.slice(0, 8)} has been assigned to another banker.`,
+        );
+      }
+    }
+
+    return updated;
+  }
+
   /**
    * Approve loan
    */
@@ -458,7 +763,17 @@ class LoanService {
       where: { id: loanId },
       include: {
         applicant: { select: { id: true, role: true, name: true, email: true } },
-        loanType: { select: { id: true, name: true, code: true } },
+        loanType: { select: { id: true, name: true, code: true, requiredDocuments: true } },
+        documents: {
+          select: {
+            id: true,
+            type: true,
+            fileType: true,
+            filename: true,
+            url: true,
+            secureUrl: true,
+          },
+        },
       },
     });
 
@@ -480,7 +795,8 @@ class LoanService {
       throw error;
     }
 
-    if (!interestRate || interestRate <= 0) {
+    const effectiveInterestRate = Number(interestRate || loan.interestRate || 0);
+    if (!effectiveInterestRate || effectiveInterestRate <= 0) {
       const error = new Error('Valid interest rate is required for approval');
       error.status = 400;
       throw error;
@@ -495,7 +811,25 @@ class LoanService {
       loanTypeHint,
     );
 
+    // If profile KYC is incomplete, allow approval when equivalent required docs
+    // are already uploaded on this loan and can be manually reviewed in loan detail.
+    let kycSatisfiedByLoanDocs = false;
     if (!kyc.complete) {
+      const loanDocTypes = new Set(
+        (loan.documents || [])
+          .map((d) => (d.type || d.fileType || '').toString().trim().toUpperCase())
+          .filter((v) => v.length > 0),
+      );
+
+      const missingTypes = (kyc.missingTypes || [])
+        .map((t) => t.toString().trim().toUpperCase())
+        .filter((t) => t.length > 0);
+
+      const stillMissing = missingTypes.filter((t) => !loanDocTypes.has(t));
+      kycSatisfiedByLoanDocs = stillMissing.length === 0 && missingTypes.length > 0;
+    }
+
+    if (!kyc.complete && !kycSatisfiedByLoanDocs) {
       const error = new Error(
         `KYC incomplete for applicant. Missing: ${kyc.missingTypes.join(', ') || 'requirements'}`,
       );
@@ -511,7 +845,7 @@ class LoanService {
         data: {
           status: 'APPROVED',
           kycStatus: 'VERIFIED',
-          interestRate: interestRate,
+          interestRate: effectiveInterestRate,
         },
         include: {
           loanType: true,
@@ -527,7 +861,9 @@ class LoanService {
           entityId: loanId,
           action: 'LOAN_APPROVED',
           actorId: bankerId,
-          details: `Rate: ${interestRate}%, Notes: ${notes || ''}`,
+          details: `Rate: ${effectiveInterestRate}%, KYC: ${
+            kyc.complete ? 'PROFILE_VERIFIED' : 'LOAN_DOCUMENTS_VERIFIED'
+          }, Notes: ${notes || ''}`,
         },
       });
 

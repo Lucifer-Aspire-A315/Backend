@@ -6,12 +6,13 @@ const { logger } = require('../middleware/logger');
  */
 async function applyForLoan(req, res, next) {
   try {
-    const merchantId = req.user.userId;
+    const actorId = req.user.userId;
+    const actorRole = req.user.role;
     const loanData = req.body;
 
-    const loan = await loanService.applyForLoan(loanData, merchantId);
+    const loan = await loanService.applyForLoan(loanData, actorId, actorRole);
 
-    logger.info('Loan application submitted', { loanId: loan.id, merchantId });
+    logger.info('Loan application submitted', { loanId: loan.id, actorId, actorRole });
     res.status(201).json({
       success: true,
       data: loan,
@@ -98,6 +99,73 @@ async function assignBanker(req, res, next) {
 }
 
 /**
+ * Request assignment (BANKER only)
+ */
+async function requestAssignment(req, res, next) {
+  try {
+    const { id } = req.params;
+    const bankerId = req.user.userId;
+    const { note, proposedInterestRate } = req.body || {};
+
+    if (!proposedInterestRate || Number(proposedInterestRate) <= 0) {
+      const error = new Error('proposedInterestRate must be greater than 0');
+      error.status = 400;
+      return next(error);
+    }
+
+    const loan = await loanService.requestAssignment(id, bankerId, note, Number(proposedInterestRate));
+
+    res.status(200).json({
+      success: true,
+      data: loan,
+      message: 'Assignment request submitted',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Approve/reject assignment request (CUSTOMER/MERCHANT/ADMIN)
+ */
+async function assignmentDecision(req, res, next) {
+  try {
+    const { id } = req.params;
+    const actorId = req.user.userId;
+    const actorRole = req.user.role;
+    const { approve, notes, bankerId } = req.body || {};
+
+    if (typeof approve !== 'boolean') {
+      const error = new Error('approve (boolean) is required');
+      error.status = 400;
+      return next(error);
+    }
+    if (!bankerId) {
+      const error = new Error('bankerId is required');
+      error.status = 400;
+      return next(error);
+    }
+
+    const loan = await loanService.assignmentDecision(
+      id,
+      actorId,
+      actorRole,
+      bankerId,
+      approve,
+      notes,
+    );
+
+    res.status(200).json({
+      success: true,
+      data: loan,
+      message: approve ? 'Assignment request approved' : 'Assignment request rejected',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Approve loan (BANKER only)
  */
 async function approveLoan(req, res, next) {
@@ -105,12 +173,6 @@ async function approveLoan(req, res, next) {
     const { id } = req.params;
     const { notes, interestRate } = req.body;
     const bankerId = req.user.userId;
-
-    if (!interestRate) {
-      const error = new Error('Interest rate is required for approval');
-      error.status = 400;
-      return next(error);
-    }
 
     const loan = await loanService.approveLoan(id, bankerId, notes, interestRate);
 
@@ -204,6 +266,8 @@ module.exports = {
   getLoan,
   listLoans,
   assignBanker,
+  requestAssignment,
+  assignmentDecision,
   approveLoan,
   rejectLoan,
   disburseLoan,

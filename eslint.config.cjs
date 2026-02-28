@@ -13,6 +13,7 @@ module.exports = [
       'src/logs/**',
       'postman/**',
       'prisma/migrations/**',
+      'generated/**',
       'dist/**',
       '*.log',
     ],

@@ -36,7 +36,7 @@ async function sendEmail(to, subject, html, text) {
       await resend.emails.send({
         from:
           process.env.EMAIL_FROM ||
-          'RN FinTech <onboarding@resend.dev>',
+          'RN FinTech <onboarding@rnfintech.com>',
         to, // MUST be string
         subject,
         html,
@@ -52,7 +52,7 @@ async function sendEmail(to, subject, html, text) {
       from:
         process.env.EMAIL_FROM ||
         process.env.SMTP_FROM ||
-        'RN FinTech <onboarding@resend.dev>',
+        'RN FinTech <onboarding@rnfintech.com>',
       to,
       subject,
       html,

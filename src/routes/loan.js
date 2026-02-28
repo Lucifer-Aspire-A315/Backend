@@ -7,8 +7,8 @@ const router = express.Router();
 // All routes require authentication
 router.use(authenticate);
 
-// Apply for loan (MERCHANT only)
-router.post('/apply', authorize(['MERCHANT']), loanController.applyForLoan);
+// Apply for loan (MERCHANT/CUSTOMER)
+router.post('/apply', authorize(['MERCHANT', 'CUSTOMER']), loanController.applyForLoan);
 
 // Get single loan
 router.get('/:id', loanController.getLoan);
@@ -16,8 +16,18 @@ router.get('/:id', loanController.getLoan);
 // List loans
 router.get('/', loanController.listLoans);
 
-// Assign banker (BANKER/ADMIN only)
-router.post('/:id/assign', authorize(['BANKER', 'ADMIN']), loanController.assignBanker);
+// Assign banker (ADMIN only)
+router.post('/:id/assign', authorize(['ADMIN']), loanController.assignBanker);
+
+// Banker requests assignment
+router.post('/:id/request-assignment', authorize(['BANKER']), loanController.requestAssignment);
+
+// Applicant/Merchant approve or reject assignment request
+router.post(
+  '/:id/assignment-decision',
+  authorize(['CUSTOMER', 'MERCHANT', 'ADMIN']),
+  loanController.assignmentDecision,
+);
 
 // Approve loan (BANKER only)
 router.post('/:id/approve', authorize(['BANKER']), loanController.approveLoan);
