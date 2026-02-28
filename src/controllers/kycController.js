@@ -4,6 +4,35 @@ const { validationSchemas, validateKYC } = require('../utils/validation');
 const { logger } = require('../middleware/logger');
 
 class KYCController {
+  static async searchOnBehalfUsers(req, res, next) {
+    try {
+      if (!['MERCHANT', 'BANKER', 'ADMIN'].includes(req.user.role)) {
+        const error = new Error('Not authorized to search users for on-behalf upload');
+        error.status = 403;
+        return next(error);
+      }
+
+      const search = req.query.search?.toString() ?? '';
+      const parsedLimit = parseInt(req.query.limit, 10);
+      const limit = Number.isFinite(parsedLimit) ? parsedLimit : 20;
+
+      const users = await kycService.searchOnBehalfUsers(
+        req.user.userId,
+        req.user.role,
+        search,
+        limit,
+      );
+
+      res.status(200).json({
+        success: true,
+        message: `Found ${users.length} user(s)`,
+        data: { users },
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   /**
    * POST /api/v1/kyc/upload-url
    * Generate Cloudinary signature for document upload
@@ -83,12 +112,18 @@ class KYCController {
         return next(error);
       }
 
-      const { kycDocId, publicId, fileSize, contentType } = validateKYC(
+      const { kycDocId, publicId, fileSize, contentType, secureUrl } = validateKYC(
         validationSchemas.kycCompleteUpload,
         req.body,
       );
 
-      const kycDoc = await kycService.completeUpload(kycDocId, publicId, fileSize, contentType);
+      const kycDoc = await kycService.completeUpload(
+        kycDocId,
+        publicId,
+        fileSize,
+        contentType,
+        secureUrl,
+      );
 
       const response = {
         success: true,
@@ -128,7 +163,7 @@ class KYCController {
         return next(error);
       }
 
-      const { kycDocId, publicId, fileSize, contentType } = validateKYC(
+      const { kycDocId, publicId, fileSize, contentType, secureUrl } = validateKYC(
         validationSchemas.kycCompleteUpload,
         req.body,
       );
@@ -140,6 +175,7 @@ class KYCController {
         publicId,
         fileSize,
         contentType,
+        secureUrl,
       );
 
       res.status(200).json({ success: true, message: 'KYC document uploaded successfully', data: { kycDoc } });
@@ -370,6 +406,11 @@ class KYCController {
 
 // Export controller methods with middleware
 module.exports = {
+  searchOnBehalfUsers: [
+    authMiddleware.authenticate,
+    authMiddleware.authorize(['MERCHANT', 'BANKER', 'ADMIN']),
+    KYCController.searchOnBehalfUsers,
+  ],
   generateUploadUrl: [authMiddleware.authenticate, KYCController.generateUploadUrl],
   generateUploadUrlOnBehalf: [
     authMiddleware.authenticate,

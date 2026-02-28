@@ -12,6 +12,75 @@ cloudinary.config({
 });
 
 class KYCService {
+  async searchOnBehalfUsers(actorUserId, actorRole, search = '', limit = 20) {
+    const take = Math.min(Math.max(Number(limit) || 20, 1), 50);
+    const term = (search || '').trim();
+    const termFilter = term
+      ? {
+          OR: [
+            { name: { contains: term, mode: 'insensitive' } },
+            { email: { contains: term, mode: 'insensitive' } },
+            { phone: { contains: term, mode: 'insensitive' } },
+          ],
+        }
+      : {};
+
+    if (actorRole === 'MERCHANT') {
+      const merchantProfile = await prisma.merchantProfile.findUnique({
+        where: { userId: actorUserId },
+        select: { id: true },
+      });
+      if (!merchantProfile) return [];
+
+      const users = await prisma.user.findMany({
+        where: {
+          role: 'CUSTOMER',
+          status: { in: ['ACTIVE', 'PENDING'] },
+          customerProfile: { is: { merchantId: merchantProfile.id } },
+          ...termFilter,
+        },
+        take,
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          role: true,
+          status: true,
+        },
+      });
+
+      return users;
+    }
+
+    if (actorRole === 'BANKER' || actorRole === 'ADMIN') {
+      const users = await prisma.user.findMany({
+        where: {
+          role: { in: ['CUSTOMER', 'MERCHANT'] },
+          status: { not: 'DELETED' },
+          ...termFilter,
+        },
+        take,
+        orderBy: { name: 'asc' },
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          phone: true,
+          role: true,
+          status: true,
+        },
+      });
+
+      return users;
+    }
+
+    const error = new Error('Not authorized to search on-behalf users');
+    error.status = 403;
+    throw error;
+  }
+
   /**
    * Generate pre-signed URL for document upload to Cloudinary
    */
@@ -148,7 +217,7 @@ class KYCService {
   /**
    * Complete document upload (update metadata)
    */
-  async completeUpload(kycDocId, publicId, fileSize, contentType) {
+  async completeUpload(kycDocId, publicId, fileSize, contentType, secureUrl = null) {
     try {
       // Fetch doc first to verify ownership/state and reconstruct publicId
       const existingDoc = await prisma.kYCDocument.findUnique({ where: { id: kycDocId } });
@@ -158,16 +227,37 @@ class KYCService {
         throw error;
       }
 
-      // Enforce publicId structure to prevent IDOR/Path Traversal
-      const expectedPublicId = `${existingDoc.userId}/${existingDoc.type}/${existingDoc.id}`;
-      if (publicId !== expectedPublicId) {
-        logger.warn('Mismatch in publicId during completion', {
-          provided: publicId,
-          expected: expectedPublicId,
+      // Normalize publicId. Cloudinary may return:
+      // - <userId>/<docType>/<uuid-timestamp>
+      // - <folder>/<userId>/<docType>/<uuid-timestamp>
+      // and env folder may contain trailing slash.
+      const folder = (process.env.CLOUDINARY_KYC_FOLDER || '').replace(/^\/+|\/+$/g, '');
+      let normalizedPublicId = (publicId || '').toString().replace(/^\/+/, '');
+
+      if (folder && normalizedPublicId.startsWith(`${folder}/`)) {
+        normalizedPublicId = normalizedPublicId.slice(folder.length + 1);
+      }
+
+      // Recover from any extra leading segments by locating the true ownership marker.
+      const expectedPrefix = `${existingDoc.userId}/${existingDoc.type}/`;
+      if (!normalizedPublicId.startsWith(expectedPrefix)) {
+        const marker = `/${expectedPrefix}`;
+        const idx = normalizedPublicId.indexOf(marker);
+        if (idx >= 0) {
+          normalizedPublicId = normalizedPublicId.slice(idx + 1);
+        }
+      }
+
+      if (!normalizedPublicId || !normalizedPublicId.startsWith(expectedPrefix)) {
+        const error = new Error('Invalid publicId for this KYC document');
+        error.status = 400;
+        error.details = {
+          providedPublicId: publicId,
+          normalizedPublicId,
+          expectedPrefix,
           kycDocId,
-        });
-        // Force the correct publicId
-        publicId = expectedPublicId;
+        };
+        throw error;
       }
 
       // Validate file
@@ -187,11 +277,13 @@ class KYCService {
       }
 
       // Update KYC document
-      const folder = process.env.CLOUDINARY_KYC_FOLDER;
       const kycDoc = await prisma.kYCDocument.update({
         where: { id: kycDocId },
         data: {
-          url: `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload/${folder}/${publicId}`,
+          url:
+            secureUrl && String(secureUrl).trim().length > 0
+              ? String(secureUrl).trim()
+              : `https://res.cloudinary.com/${process.env.CLOUDINARY_CLOUD_NAME}/image/upload/${folder}/${normalizedPublicId}`,
           status: 'PENDING',
           verifiedBy: null,
         },
@@ -233,7 +325,15 @@ class KYCService {
   /**
    * Complete upload on behalf with permission checks
    */
-  async completeUploadOnBehalf(actorUserId, actorRole, kycDocId, publicId, fileSize, contentType) {
+  async completeUploadOnBehalf(
+    actorUserId,
+    actorRole,
+    kycDocId,
+    publicId,
+    fileSize,
+    contentType,
+    secureUrl = null,
+  ) {
     const kycDoc = await prisma.kYCDocument.findUnique({ where: { id: kycDocId } });
     if (!kycDoc) {
       const error = new Error('KYC document not found');
@@ -257,7 +357,7 @@ class KYCService {
       throw error;
     }
 
-    return this.completeUpload(kycDocId, publicId, fileSize, contentType);
+    return this.completeUpload(kycDocId, publicId, fileSize, contentType, secureUrl);
   }
 
   /**
