@@ -51,6 +51,8 @@ model User {
   merchantProfile               MerchantProfile?
   customerProfile               CustomerProfile?
   bankerProfile                 BankerProfile?
+  customerLinkRequests          MerchantCustomerLinkRequest[] @relation("CustomerLinkRequests")
+  requestedMerchantLinks        MerchantCustomerLinkRequest[] @relation("MerchantRequestedLinks")
   documents                     Document[]
   updatedLoanStatuses           LoanStatusHistory[] @relation("UserUpdatedLoanStatuses")
   refreshTokens                 RefreshToken[]
@@ -148,6 +150,7 @@ model MerchantProfile {
   address      String?
   pincode      String?
   customers    CustomerProfile[]
+  linkRequests MerchantCustomerLinkRequest[]
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
 }
@@ -245,6 +248,26 @@ model RefreshToken {
   lastActive DateTime @default(now())
 }
 
+model MerchantCustomerLinkRequest {
+  id                String            @id @default(uuid())
+  merchantProfileId String
+  merchantProfile   MerchantProfile   @relation(fields: [merchantProfileId], references: [id])
+  customerId        String
+  customer          User              @relation("CustomerLinkRequests", fields: [customerId], references: [id])
+  requestedByUserId String
+  requestedBy       User              @relation("MerchantRequestedLinks", fields: [requestedByUserId], references: [id])
+  status            LinkRequestStatus @default(PENDING)
+  tokenHash         String            @unique
+  expiresAt         DateTime
+  decidedAt         DateTime?
+  decisionChannel   String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+
+  @@index([merchantProfileId, status])
+  @@index([customerId, status])
+}
+
 enum Role {
   CUSTOMER
   MERCHANT
@@ -267,4 +290,12 @@ enum KYCStatus {
   VERIFIED
   REJECTED
   UPLOADING
+}
+
+enum LinkRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+  CANCELLED
 }

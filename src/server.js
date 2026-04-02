@@ -24,12 +24,67 @@ const morgan = require('morgan');
 // Create Express app
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+
+function parseAllowedOrigins() {
+  const rawOrigins = process.env.FRONTEND_ORIGINS || process.env.FRONTEND_URL || '';
+  const parsed = rawOrigins
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+
+  if (parsed.length > 0) {
+    return parsed;
+  }
+
+  return process.env.NODE_ENV === 'production'
+    ? []
+    : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:54046', 'http://localhost:50369'];
+}
+
+const allowedOrigins = parseAllowedOrigins();
+
+function isDevelopmentLocalOrigin(origin) {
+  if (process.env.NODE_ENV === 'production') {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(origin);
+    return parsed.protocol === 'http:' &&
+      (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1');
+  } catch {
+    return false;
+  }
+}
+
+function isAllowedOrigin(origin) {
+  if (allowedOrigins.includes(origin)) {
+    return true;
+  }
+
+  return isDevelopmentLocalOrigin(origin);
+}
 
 // Security middleware
 app.use(helmet());
 app.use(
   cors({
-    origin: ['http://localhost:3001', 'http://localhost:57398', 'http://localhost:50369'],
+    origin: (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+
+      if (isAllowedOrigin(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      const error = new Error('Origin not allowed by CORS');
+      error.status = 403;
+      callback(error);
+    },
     credentials: true,
   }),
 );
@@ -76,6 +131,7 @@ app.use('/api/v1/loan', loanRoutes);
 app.use('/api/v1/loan-types', require('./routes/loanType'));
 app.use('/api/v1/banks', require('./routes/bank'));
 app.use('/api/v1/admin/banks', require('./routes/bankAdmin'));
+app.use('/api/v1/customer-links', require('./routes/customerLinks'));
 app.use('/api/v1/kyc', kycRoutes);
 app.use('/api/v1/notifications', notificationRoutes);
 app.use('/api/v1/dashboard', dashboardRoutes);
@@ -94,7 +150,16 @@ const startServer = async () => {
     const validateEnv = () => {
       if (process.env.NODE_ENV !== 'production') return;
 
-      const required = ['DATABASE_URL', 'JWT_SECRET', 'FRONTEND_URL'];
+      const required = [
+        'DATABASE_URL',
+        'JWT_SECRET',
+        'JWT_REFRESH_SECRET',
+        'FRONTEND_ORIGINS',
+        'CLOUDINARY_CLOUD_NAME',
+        'CLOUDINARY_API_KEY',
+        'CLOUDINARY_API_SECRET',
+        'CLOUDINARY_KYC_FOLDER',
+      ];
       const missing = required.filter((k) => !process.env[k]);
       if (missing.length) {
         logger.error('Missing required environment variables', { missing });
@@ -113,6 +178,12 @@ const startServer = async () => {
         logger.error(msg);
         process.exit(1);
       }
+
+      if (!process.env.REDIS_URL) {
+        logger.warn(
+          'REDIS_URL is not configured in production. Rate-limits and lockouts will fall back to in-memory storage.',
+        );
+      }
     };
     validateEnv();
     // Test DB connection via Prisma
@@ -121,7 +192,7 @@ const startServer = async () => {
     logger.info('Database Connection', {
       status: 'connected',
       provider: 'PostgreSQL',
-      database: 'rn_fintech',
+      databaseUrlConfigured: !!process.env.DATABASE_URL,
     });
     logger.info('Database connected successfully', {
       tables: ['User', 'Loan', 'KYCDocument', 'Notification', 'AuditLog'],
@@ -129,18 +200,20 @@ const startServer = async () => {
 
 
     // Start server
-    const server = app.listen(PORT, 'localhost', () => {
+    const server = app.listen(PORT, HOST, () => {
       logger.info('Server Started', {
         port: PORT,
+        host: HOST,
         environment: process.env.NODE_ENV,
-        baseUrl: `http://localhost:${PORT}/api/v1`,
+        baseUrl: `${HOST === '0.0.0.0' ? 'http://localhost' : `http://${HOST}`}:${PORT}/api/v1`,
       });
       logger.info('Server URLs', {
-        base: `http://localhost:${PORT}/api/v1`,
+        base: `${HOST === '0.0.0.0' ? 'http://localhost' : `http://${HOST}`}:${PORT}/api/v1`,
         health: `/api/v1/health`,
         authSignup: `/api/v1/auth/signup`,
         authLogin: `/api/v1/auth/login`,
         logs: './logs/combined.log',
+        allowedOrigins,
       });
     });
 

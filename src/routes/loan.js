@@ -7,6 +7,33 @@ const router = express.Router();
 // All routes require authentication
 router.use(authenticate);
 
+router.get(
+  '/customers',
+  authorize(['MERCHANT']),
+  loanController.listLinkedCustomers,
+);
+router.get(
+  '/customers/link-requests',
+  authorize(['MERCHANT']),
+  loanController.listMerchantLinkRequests,
+);
+// Search existing customers for merchant loan applications
+router.get(
+  '/customers/search',
+  authorize(['MERCHANT']),
+  loanController.searchExistingCustomers,
+);
+router.post(
+  '/customers/link',
+  authorize(['MERCHANT']),
+  loanController.linkExistingCustomer,
+);
+router.delete(
+  '/customers/:customerId/link',
+  authorize(['MERCHANT']),
+  loanController.unlinkExistingCustomer,
+);
+
 // Apply for loan (MERCHANT/CUSTOMER)
 router.post('/apply', authorize(['MERCHANT', 'CUSTOMER']), loanController.applyForLoan);
 

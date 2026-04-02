@@ -2,6 +2,220 @@ const loanService = require('../services/loanService');
 const { logger } = require('../middleware/logger');
 
 /**
+ * Search existing customers for merchant loan applications
+ */
+async function searchExistingCustomers(req, res, next) {
+  try {
+    const actorId = req.user.userId;
+    const actorRole = req.user.role;
+    const search = req.query.search?.toString() ?? '';
+    const limit = parseInt(req.query.limit, 10) || 20;
+
+    const users = await loanService.searchExistingCustomers(actorId, actorRole, search, limit);
+
+    res.status(200).json({
+      success: true,
+      data: { users },
+      message: `Found ${users.length} customer(s)`,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * List linked customers for the authenticated merchant
+ */
+async function listLinkedCustomers(req, res, next) {
+  try {
+    const actorId = req.user.userId;
+    const actorRole = req.user.role;
+    const search = req.query.search?.toString() ?? '';
+    const limit = parseInt(req.query.limit, 10) || 50;
+
+    const users = await loanService.listLinkedCustomers(actorId, actorRole, search, limit);
+
+    res.status(200).json({
+      success: true,
+      data: { users },
+      message: `Found ${users.length} linked customer(s)`,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function listMerchantLinkRequests(req, res, next) {
+  try {
+    const actorId = req.user.userId;
+    const actorRole = req.user.role;
+    const status = req.query.status?.toString() ?? null;
+    const limit = parseInt(req.query.limit, 10) || 50;
+
+    const requests = await loanService.listMerchantLinkRequests(
+      actorId,
+      actorRole,
+      status,
+      limit,
+    );
+
+    res.status(200).json({
+      success: true,
+      data: { requests },
+      message: `Found ${requests.length} merchant link request(s)`,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Link an existing customer account to the authenticated merchant
+ */
+async function linkExistingCustomer(req, res, next) {
+  try {
+    const actorId = req.user.userId;
+    const actorRole = req.user.role;
+    const email = req.body?.email?.toString() ?? '';
+
+    if (!email.trim()) {
+      const error = new Error('Customer email is required');
+      error.status = 400;
+      return next(error);
+    }
+
+    const request = await loanService.createLinkRequest(actorId, actorRole, email);
+
+    res.status(200).json({
+      success: true,
+      data: request,
+      message: 'Customer approval request sent',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * Unlink a customer account from the authenticated merchant
+ */
+async function unlinkExistingCustomer(req, res, next) {
+  try {
+    const actorId = req.user.userId;
+    const actorRole = req.user.role;
+    const customerId = req.params.customerId?.toString() ?? '';
+
+    if (!customerId) {
+      const error = new Error('Customer ID is required');
+      error.status = 400;
+      return next(error);
+    }
+
+    const customer = await loanService.unlinkExistingCustomer(actorId, actorRole, customerId);
+
+    res.status(200).json({
+      success: true,
+      data: customer,
+      message: 'Customer unlinked successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function listCustomerLinkRequests(req, res, next) {
+  try {
+    const customerId = req.user.userId;
+    const status = req.query.status?.toString() ?? 'PENDING';
+    const limit = parseInt(req.query.limit, 10) || 50;
+
+    const requests = await loanService.listCustomerLinkRequests(customerId, status, limit);
+
+    res.status(200).json({
+      success: true,
+      data: { requests },
+      message: `Found ${requests.length} customer link request(s)`,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function decideCustomerLinkRequest(req, res, next) {
+  try {
+    const customerId = req.user.userId;
+    const requestId = req.params.id;
+    const decision = req.body?.decision?.toString() ?? '';
+
+    if (!['approve', 'reject'].includes(decision)) {
+      const error = new Error('decision must be approve or reject');
+      error.status = 400;
+      return next(error);
+    }
+
+    const request = await loanService.decideLinkRequestByCustomer(
+      customerId,
+      requestId,
+      decision,
+    );
+
+    res.status(200).json({
+      success: true,
+      data: request,
+      message: decision === 'approve' ? 'Link request approved' : 'Link request rejected',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function getCustomerLinkRequestByToken(req, res, next) {
+  try {
+    const token = req.query.token?.toString() ?? '';
+    if (!token) {
+      const error = new Error('token is required');
+      error.status = 400;
+      return next(error);
+    }
+
+    const request = await loanService.getLinkRequestByToken(token);
+    res.status(200).json({
+      success: true,
+      data: request,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function decideCustomerLinkRequestByToken(req, res, next) {
+  try {
+    const token = req.body?.token?.toString() ?? '';
+    const decision = req.body?.decision?.toString() ?? '';
+
+    if (!token) {
+      const error = new Error('token is required');
+      error.status = 400;
+      return next(error);
+    }
+    if (!['approve', 'reject'].includes(decision)) {
+      const error = new Error('decision must be approve or reject');
+      error.status = 400;
+      return next(error);
+    }
+
+    const request = await loanService.decideLinkRequestByToken(token, decision);
+    res.status(200).json({
+      success: true,
+      data: request,
+      message: decision === 'approve' ? 'Link request approved' : 'Link request rejected',
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
  * Apply for a loan
  */
 async function applyForLoan(req, res, next) {
@@ -262,6 +476,15 @@ async function cancelLoan(req, res, next) {
 }
 
 module.exports = {
+  searchExistingCustomers,
+  listLinkedCustomers,
+  listMerchantLinkRequests,
+  linkExistingCustomer,
+  unlinkExistingCustomer,
+  listCustomerLinkRequests,
+  decideCustomerLinkRequest,
+  getCustomerLinkRequestByToken,
+  decideCustomerLinkRequestByToken,
   applyForLoan,
   getLoan,
   listLoans,

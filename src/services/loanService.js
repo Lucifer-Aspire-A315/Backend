@@ -1,9 +1,10 @@
 const { prisma } = require('../lib/prisma');
 const { logger } = require('../middleware/logger');
-const { hashToken } = require('../utils/emailVerification');
+const { generateToken, getTokenExpiry, hashToken } = require('../utils/emailVerification');
 const { verifyResource } = require('../utils/cloudinary');
 const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
+const emailSender = require('../utils/emailSender');
 
 const ajv = new Ajv({ allErrors: true });
 addFormats(ajv);
@@ -17,6 +18,784 @@ class LoanService {
     }
     return [];
   }
+
+  async getMerchantProfileOrThrow(actorId) {
+    const merchantProfile = await prisma.merchantProfile.findUnique({
+      where: { userId: actorId },
+      select: {
+        id: true,
+        businessName: true,
+      },
+    });
+
+    if (!merchantProfile) {
+      const error = new Error('Merchant profile not found');
+      error.status = 404;
+      throw error;
+    }
+
+    return merchantProfile;
+  }
+
+  async assertMerchantOwnsCustomer(actorId, customerId) {
+    const merchantProfile = await this.getMerchantProfileOrThrow(actorId);
+
+    const customer = await prisma.user.findUnique({
+      where: { id: customerId },
+      include: {
+        customerProfile: true,
+      },
+    });
+
+    if (!customer || customer.role !== 'CUSTOMER') {
+      const error = new Error('Customer not found');
+      error.status = 404;
+      throw error;
+    }
+
+    if (customer.customerProfile?.merchantId !== merchantProfile.id) {
+      const error = new Error('Customer is not linked to this merchant');
+      error.status = 403;
+      throw error;
+    }
+
+    return { customer, merchantProfile };
+  }
+
+  async searchExistingCustomers(actorId, actorRole, search = '', limit = 20) {
+    if (actorRole !== 'MERCHANT') {
+      const error = new Error('Only merchants can search existing customers');
+      error.status = 403;
+      throw error;
+    }
+
+    const take = Math.min(Math.max(Number(limit) || 20, 1), 50);
+    const term = String(search || '').trim();
+    const termFilter = term
+      ? {
+          OR: [
+            { name: { contains: term, mode: 'insensitive' } },
+            { email: { contains: term, mode: 'insensitive' } },
+            { phone: { contains: term, mode: 'insensitive' } },
+          ],
+        }
+      : {};
+
+    const merchantProfile = await this.getMerchantProfileOrThrow(actorId);
+
+    const users = await prisma.user.findMany({
+      where: {
+        role: 'CUSTOMER',
+        status: { in: ['ACTIVE', 'PENDING'] },
+        customerProfile: {
+          is: {
+            merchantId: merchantProfile.id,
+          },
+        },
+        ...termFilter,
+      },
+      take,
+      orderBy: { name: 'asc' },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        phone: true,
+        role: true,
+        status: true,
+        customerProfile: {
+          select: {
+            merchantId: true,
+          },
+        },
+      },
+    });
+
+    return users.map(({ customerProfile: _customerProfile, ...user }) => user);
+  }
+
+  async listLinkedCustomers(actorId, actorRole, search = '', limit = 50) {
+    return this.searchExistingCustomers(actorId, actorRole, search, limit);
+  }
+
+  serializeLinkRequest(request) {
+    return {
+      id: request.id,
+      status: request.status,
+      expiresAt: request.expiresAt,
+      decidedAt: request.decidedAt,
+      createdAt: request.createdAt,
+      decisionChannel: request.decisionChannel,
+      customer: request.customer
+        ? {
+            id: request.customer.id,
+            name: request.customer.name,
+            email: request.customer.email,
+            phone: request.customer.phone,
+            role: request.customer.role,
+            status: request.customer.status,
+          }
+        : null,
+      merchant: request.merchantProfile
+        ? {
+            id: request.merchantProfile.userId,
+            businessName: request.merchantProfile.businessName,
+            ownerName: request.merchantProfile.user?.name || null,
+            ownerEmail: request.merchantProfile.user?.email || null,
+          }
+        : null,
+    };
+  }
+
+  async expirePendingLinkRequestIfNeeded(requestId) {
+    const request = await prisma.merchantCustomerLinkRequest.findUnique({
+      where: { id: requestId },
+    });
+    if (!request || request.status !== 'PENDING') {
+      return request;
+    }
+
+    if (request.expiresAt <= new Date()) {
+      return prisma.merchantCustomerLinkRequest.update({
+        where: { id: requestId },
+        data: {
+          status: 'EXPIRED',
+          decidedAt: new Date(),
+          decisionChannel: 'SYSTEM',
+        },
+      });
+    }
+
+    return request;
+  }
+
+  async createLinkRequest(actorId, actorRole, email) {
+    if (actorRole !== 'MERCHANT') {
+      const error = new Error('Only merchants can request customer links');
+      error.status = 403;
+      throw error;
+    }
+
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail) {
+      const error = new Error('Customer email is required');
+      error.status = 400;
+      throw error;
+    }
+
+    const merchantProfile = await this.getMerchantProfileOrThrow(actorId);
+    const customer = await prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      include: {
+        customerProfile: true,
+      },
+    });
+
+    if (!customer || customer.role !== 'CUSTOMER') {
+      const error = new Error('Customer account not found. Ask the customer to sign up first.');
+      error.status = 404;
+      throw error;
+    }
+
+    if (!['ACTIVE', 'PENDING'].includes(customer.status)) {
+      const error = new Error('Customer account is not available for linking');
+      error.status = 400;
+      throw error;
+    }
+
+    if (customer.customerProfile?.merchantId === merchantProfile.id) {
+      const error = new Error('Customer is already linked to this merchant');
+      error.status = 409;
+      throw error;
+    }
+
+    if (
+      customer.customerProfile?.merchantId &&
+      customer.customerProfile.merchantId !== merchantProfile.id
+    ) {
+      const error = new Error('Customer is already linked to another merchant');
+      error.status = 409;
+      throw error;
+    }
+
+    const existingPending = await prisma.merchantCustomerLinkRequest.findFirst({
+      where: {
+        merchantProfileId: merchantProfile.id,
+        customerId: customer.id,
+        status: 'PENDING',
+      },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+          },
+        },
+        merchantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            businessName: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (existingPending && existingPending.expiresAt > new Date()) {
+      const error = new Error('A pending customer approval request already exists');
+      error.status = 409;
+      throw error;
+    }
+
+    if (existingPending) {
+      await prisma.merchantCustomerLinkRequest.update({
+        where: { id: existingPending.id },
+        data: {
+          status: 'EXPIRED',
+          decidedAt: new Date(),
+          decisionChannel: 'SYSTEM',
+        },
+      });
+    }
+
+    const token = generateToken();
+    const tokenHash = hashToken(token);
+    const expiresAt = getTokenExpiry(48);
+
+    const request = await prisma.merchantCustomerLinkRequest.create({
+      data: {
+        merchantProfileId: merchantProfile.id,
+        customerId: customer.id,
+        requestedByUserId: actorId,
+        tokenHash,
+        expiresAt,
+      },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+          },
+        },
+        merchantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            businessName: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await prisma.notification.create({
+      data: {
+        userId: customer.id,
+        type: 'CUSTOMER_LINK_REQUEST',
+        message: `${merchantProfile.businessName} requested permission to link your customer account.`,
+      },
+    });
+
+    emailSender.sendCustomerLinkRequestEmail(
+      customer.email,
+      customer.name,
+      merchantProfile.businessName,
+      token,
+    ).catch((err) =>
+      logger.error('Failed to send customer link request email', {
+        error: err.message,
+        customerId: customer.id,
+      }),
+    );
+
+    return this.serializeLinkRequest(request);
+  }
+
+  async listMerchantLinkRequests(actorId, actorRole, status = null, limit = 50) {
+    if (actorRole !== 'MERCHANT') {
+      const error = new Error('Only merchants can view link requests');
+      error.status = 403;
+      throw error;
+    }
+
+    const merchantProfile = await this.getMerchantProfileOrThrow(actorId);
+    const requests = await prisma.merchantCustomerLinkRequest.findMany({
+      where: {
+        merchantProfileId: merchantProfile.id,
+        ...(status ? { status } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(Number(limit) || 50, 1), 100),
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+          },
+        },
+        merchantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            businessName: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await Promise.all(requests.map((request) => this.expirePendingLinkRequestIfNeeded(request.id)));
+
+    const fresh = await prisma.merchantCustomerLinkRequest.findMany({
+      where: {
+        merchantProfileId: merchantProfile.id,
+        ...(status ? { status } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(Number(limit) || 50, 1), 100),
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+          },
+        },
+        merchantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            businessName: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return fresh.map((request) => this.serializeLinkRequest(request));
+  }
+
+  async listCustomerLinkRequests(customerId, status = 'PENDING', limit = 50) {
+    const requests = await prisma.merchantCustomerLinkRequest.findMany({
+      where: {
+        customerId,
+        ...(status ? { status } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(Number(limit) || 50, 1), 100),
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+          },
+        },
+        merchantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            businessName: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    await Promise.all(requests.map((request) => this.expirePendingLinkRequestIfNeeded(request.id)));
+
+    const fresh = await prisma.merchantCustomerLinkRequest.findMany({
+      where: {
+        customerId,
+        ...(status ? { status } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: Math.min(Math.max(Number(limit) || 50, 1), 100),
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+          },
+        },
+        merchantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            businessName: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return fresh.map((request) => this.serializeLinkRequest(request));
+  }
+
+  async getLinkRequestByToken(token) {
+    const tokenHash = hashToken(token);
+    if (!tokenHash) {
+      const error = new Error('Invalid approval token');
+      error.status = 400;
+      throw error;
+    }
+
+    const request = await prisma.merchantCustomerLinkRequest.findUnique({
+      where: { tokenHash },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+          },
+        },
+        merchantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            businessName: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!request) {
+      const error = new Error('Link request not found or already processed');
+      error.status = 404;
+      throw error;
+    }
+
+    const maybeExpired = await this.expirePendingLinkRequestIfNeeded(request.id);
+    const normalized = maybeExpired.status && maybeExpired.customer
+      ? maybeExpired
+      : await prisma.merchantCustomerLinkRequest.findUnique({
+          where: { id: request.id },
+          include: {
+            customer: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                phone: true,
+                role: true,
+                status: true,
+              },
+            },
+            merchantProfile: {
+              select: {
+                id: true,
+                userId: true,
+                businessName: true,
+                user: {
+                  select: {
+                    name: true,
+                    email: true,
+                  },
+                },
+              },
+            },
+          },
+        });
+
+    return this.serializeLinkRequest(normalized);
+  }
+
+  async applyLinkDecision(requestId, decision, channel) {
+    const request = await prisma.merchantCustomerLinkRequest.findUnique({
+      where: { id: requestId },
+      include: {
+        customer: {
+          include: {
+            customerProfile: true,
+          },
+        },
+        merchantProfile: true,
+      },
+    });
+
+    if (!request) {
+      const error = new Error('Link request not found');
+      error.status = 404;
+      throw error;
+    }
+
+    const normalizedRequest = await this.expirePendingLinkRequestIfNeeded(requestId);
+    if (normalizedRequest.status !== 'PENDING') {
+      const error = new Error('Link request is no longer pending');
+      error.status = 409;
+      throw error;
+    }
+
+    if (decision === 'approve') {
+      if (
+        request.customer.customerProfile?.merchantId &&
+        request.customer.customerProfile.merchantId !== request.merchantProfileId
+      ) {
+        const error = new Error('Customer is already linked to another merchant');
+        error.status = 409;
+        throw error;
+      }
+
+      await prisma.$transaction(async (tx) => {
+        if (request.customer.customerProfile) {
+          await tx.customerProfile.update({
+            where: { userId: request.customerId },
+            data: { merchantId: request.merchantProfileId },
+          });
+        } else {
+          await tx.customerProfile.create({
+            data: {
+              userId: request.customerId,
+              merchantId: request.merchantProfileId,
+            },
+          });
+        }
+
+        await tx.merchantCustomerLinkRequest.update({
+          where: { id: request.id },
+          data: {
+            status: 'APPROVED',
+            decidedAt: new Date(),
+            decisionChannel: channel,
+          },
+        });
+
+        await tx.merchantCustomerLinkRequest.updateMany({
+          where: {
+            customerId: request.customerId,
+            status: 'PENDING',
+            id: { not: request.id },
+          },
+          data: {
+            status: 'CANCELLED',
+            decidedAt: new Date(),
+            decisionChannel: 'SYSTEM',
+          },
+        });
+      });
+
+      await prisma.notification.create({
+        data: {
+          userId: request.requestedByUserId,
+          type: 'CUSTOMER_LINK_APPROVED',
+          message: `${request.customer.name} approved your customer link request.`,
+        },
+      });
+
+      await prisma.notification.create({
+        data: {
+          userId: request.customerId,
+          type: 'CUSTOMER_LINKED',
+          message: `You are now linked to merchant ${request.merchantProfile.businessName}.`,
+        },
+      });
+    } else {
+      await prisma.merchantCustomerLinkRequest.update({
+        where: { id: request.id },
+        data: {
+          status: 'REJECTED',
+          decidedAt: new Date(),
+          decisionChannel: channel,
+        },
+      });
+
+      await prisma.notification.create({
+        data: {
+          userId: request.requestedByUserId,
+          type: 'CUSTOMER_LINK_REJECTED',
+          message: `${request.customer.name} rejected your customer link request.`,
+        },
+      });
+    }
+
+    const updated = await prisma.merchantCustomerLinkRequest.findUnique({
+      where: { id: request.id },
+      include: {
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            phone: true,
+            role: true,
+            status: true,
+          },
+        },
+        merchantProfile: {
+          select: {
+            id: true,
+            userId: true,
+            businessName: true,
+            user: {
+              select: {
+                name: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return this.serializeLinkRequest(updated);
+  }
+
+  async decideLinkRequestByCustomer(customerId, requestId, decision) {
+    const request = await prisma.merchantCustomerLinkRequest.findUnique({
+      where: { id: requestId },
+      select: {
+        id: true,
+        customerId: true,
+      },
+    });
+
+    if (!request || request.customerId !== customerId) {
+      const error = new Error('Link request not found');
+      error.status = 404;
+      throw error;
+    }
+
+    return this.applyLinkDecision(requestId, decision, 'ACCOUNT');
+  }
+
+  async decideLinkRequestByToken(token, decision) {
+    const tokenHash = hashToken(token);
+    if (!tokenHash) {
+      const error = new Error('Invalid approval token');
+      error.status = 400;
+      throw error;
+    }
+
+    const request = await prisma.merchantCustomerLinkRequest.findUnique({
+      where: { tokenHash },
+      select: { id: true },
+    });
+
+    if (!request) {
+      const error = new Error('Link request not found or already processed');
+      error.status = 404;
+      throw error;
+    }
+
+    return this.applyLinkDecision(request.id, decision, 'EMAIL');
+  }
+
+  async unlinkExistingCustomer(actorId, actorRole, customerId) {
+    if (actorRole !== 'MERCHANT') {
+      const error = new Error('Only merchants can unlink customers');
+      error.status = 403;
+      throw error;
+    }
+
+    const { customer } = await this.assertMerchantOwnsCustomer(actorId, customerId);
+
+    const activeLinkedLoan = await prisma.loan.findFirst({
+      where: {
+        merchantId: actorId,
+        applicantId: customer.id,
+        status: { in: ['SUBMITTED', 'UNDER_REVIEW', 'APPROVED', 'DISBURSED'] },
+      },
+      select: {
+        id: true,
+        status: true,
+      },
+    });
+
+    if (activeLinkedLoan) {
+      const error = new Error(
+        'Cannot unlink customer with active or recently approved/disbursed merchant loans',
+      );
+      error.status = 409;
+      throw error;
+    }
+
+    await prisma.customerProfile.update({
+      where: { userId: customer.id },
+      data: { merchantId: null },
+    });
+
+    await prisma.notification.create({
+      data: {
+        userId: customer.id,
+        type: 'CUSTOMER_UNLINKED',
+        message: 'Your account is no longer linked to this merchant.',
+      },
+    });
+
+    return {
+      id: customer.id,
+      name: customer.name,
+      email: customer.email,
+      phone: customer.phone,
+      role: customer.role,
+      status: customer.status,
+      linked: false,
+    };
+  }
+
   /**
    * Apply for a loan (new comprehensive implementation)
    */
@@ -102,87 +881,15 @@ class LoanService {
           throw error;
         }
 
+        await this.assertMerchantOwnsCustomer(actorId, customer.id);
+
         customerId = customer.id;
       } else if (applicantType === 'new') {
-      const { name, email, phone, address } = applicant.customer;
-
-      if (!name || !email || !phone) {
-        const error = new Error('Name, email, and phone required for new customer');
+        const error = new Error('Merchant-created new customer loans are disabled');
         error.status = 400;
+        error.details =
+          'Merchant-created new customer loans are disabled. Ask the customer to create an account first, then send a link request.';
         throw error;
-      }
-
-      const normalizedEmail = String(email).trim().toLowerCase();
-
-      const existingUser = await prisma.user.findUnique({
-        where: { email: normalizedEmail },
-      });
-
-      if (existingUser) {
-        const error = new Error('Customer with this email already exists');
-        error.status = 409;
-        throw error;
-      }
-
-      const { generateToken, getTokenExpiry } = require('../utils/emailVerification');
-      const bcrypt = require('bcryptjs');
-      const token = generateToken();
-      const tokenHash = hashToken(token);
-      const tokenExpiry = getTokenExpiry(24);
-
-      const tempPassword = Math.random().toString(36).slice(-8);
-      const passwordHash = await bcrypt.hash(tempPassword, 12);
-
-      const newCustomer = await prisma.user.create({
-        data: {
-          name,
-          email: normalizedEmail,
-          phone,
-          passwordHash,
-          role: 'CUSTOMER',
-          isEmailVerified: false,
-          emailVerificationToken: tokenHash,
-          emailVerificationTokenExpires: tokenExpiry,
-          customerProfile: {
-            create: {
-              address: address || null,
-            },
-          },
-        },
-        include: { customerProfile: true },
-      });
-
-      customerId = newCustomer.id;
-
-      // Link this new customer to the applying merchant so on-behalf operations are authorized
-      try {
-        const merchantProfile = await prisma.merchantProfile.findUnique({ where: { userId: merchantId } });
-        if (merchantProfile) {
-          await prisma.customerProfile.update({
-            where: { userId: newCustomer.id },
-            data: { merchantId: merchantProfile.id },
-          });
-        }
-      } catch (linkErr) {
-        logger.warn('Failed to link new customer to merchant profile', {
-          merchantId,
-          customerId,
-          error: linkErr.message,
-        });
-      }
-
-      const { sendVerificationEmail } = require('../utils/emailSender');
-      sendVerificationEmail(newCustomer.email, token).catch((err) =>
-        logger.error('Failed to send verification email', {
-          error: err.message,
-          email: newCustomer.email,
-        }),
-      );
-
-      logger.info('Created new customer for loan application', {
-        customerId,
-        email: normalizedEmail,
-      });
       } else {
         const error = new Error('Invalid applicant type. Must be "merchant", "existing", or "new"');
         error.status = 400;

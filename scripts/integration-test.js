@@ -35,21 +35,35 @@ async function applyLoan(token, loanTypeId) {
 }
 
 async function assignLoan(token, loanId, bankerId) {
-  const res = await fetch(`${BASE}/loan/${loanId}/assign`, {
+  const res = await fetch(`${BASE}/loan/${loanId}/assignment-decision`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ bankerId }),
+    body: JSON.stringify({ bankerId, approve: true, notes: 'Integration approval' }),
   });
   const body = await res.json();
-  if (!res.ok) throw new Error(`Assign failed: ${JSON.stringify(body)}`);
+  if (!res.ok) throw new Error(`Assignment approval failed: ${JSON.stringify(body)}`);
   return body.data;
 }
 
-async function approveLoan(token, loanId) {
+async function requestAssignment(token, loanId) {
+  const res = await fetch(`${BASE}/loan/${loanId}/request-assignment`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      proposedInterestRate: 12.5,
+      note: 'Integration assignment request',
+    }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(`Request assignment failed: ${JSON.stringify(body)}`);
+  return body.data;
+}
+
+async function approveLoan(token, loanId, interestRate) {
   const res = await fetch(`${BASE}/loan/${loanId}/approve`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ notes: 'Integration test approval' }),
+    body: JSON.stringify({ notes: 'Integration test approval', interestRate }),
   });
   const body = await res.json();
   if (!res.ok) throw new Error(`Approve failed: ${JSON.stringify(body)}`);
@@ -82,12 +96,16 @@ async function main() {
     const { token: bankerToken, userId: bankerId } = await login('integration.banker@example.com', 'Password123!');
     console.log('Banker logged in');
 
-    // Assign loan
-    await assignLoan(bankerToken, loanId, bankerId);
-    console.log('Loan assigned');
+    // Banker requests assignment
+    await requestAssignment(bankerToken, loanId);
+    console.log('Assignment requested');
+
+    // Merchant approves assignment
+    await assignLoan(merchantToken, loanId, bankerId);
+    console.log('Assignment approved');
 
     // Approve loan
-    const approved = await approveLoan(bankerToken, loanId);
+    const approved = await approveLoan(bankerToken, loanId, 12.5);
     console.log('Loan approved:', approved.id, approved.status);
 
     console.log('Integration test completed successfully');

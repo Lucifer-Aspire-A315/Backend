@@ -566,6 +566,8 @@ class UserService {
         data: { passwordHash },
       });
 
+      await this.revokeAllRefreshTokens(userId);
+
       logger.info('Password changed successfully', { userId });
     } catch (error) {
       logger.error('Change Password Failed', { userId, error: error.message });

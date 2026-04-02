@@ -76,6 +76,14 @@ class LoanTypeService {
     try {
       const loanTypes = await prisma.loanType.findMany({
         orderBy: { name: 'asc' },
+        include: {
+          banks: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
       });
       return loanTypes;
     } catch (error) {

@@ -159,6 +159,32 @@ async function sendKYCStatusEmail(to, userName, docType, status, notes) {
   );
 }
 
+async function sendCustomerLinkRequestEmail(
+  to,
+  customerName,
+  merchantBusinessName,
+  token
+) {
+  const approvalUrl = `${
+    process.env.FRONTEND_URL || 'http://localhost:3000'
+  }/customer-link-approval?token=${token}`;
+
+  return sendEmail(
+    to,
+    'Approve merchant customer link request',
+    `
+      <div style="font-family: Arial, sans-serif; max-width: 600px;">
+        <h2 style="color:#2563EB;">Customer Link Approval Needed</h2>
+        <p>Hello ${customerName},</p>
+        <p>${merchantBusinessName} has requested permission to link your customer account.</p>
+        <p>You must approve this before the merchant can act on your behalf for loans or KYC.</p>
+        <p><a href="${approvalUrl}">${approvalUrl}</a></p>
+      </div>
+    `,
+    `${merchantBusinessName} has requested permission to link your customer account. Approve here: ${approvalUrl}`
+  );
+}
+
 /* ───────────────────────── Exports ───────────────────────── */
 
 module.exports = {
@@ -167,4 +193,5 @@ module.exports = {
   sendPasswordResetEmail,
   sendNewDeviceLoginEmail,
   sendKYCStatusEmail,
+  sendCustomerLinkRequestEmail,
 };
