@@ -3,6 +3,7 @@ const kycController = require('../controllers/kycController');
 const router = express.Router();
 
 // Customer/Merchant routes
+router.get('/on-behalf/users', kycController.searchOnBehalfUsers);
 router.post('/upload-url', kycController.generateUploadUrl);
 router.post('/complete-upload', kycController.completeUpload);
 // On-behalf routes (Merchant for their customers; Banker/Admin for any)

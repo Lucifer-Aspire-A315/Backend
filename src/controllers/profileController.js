@@ -1,5 +1,5 @@
 const { logger } = require('../middleware/logger');
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 const { validate, validationSchemas } = require('../utils/validation');
 
 // Helper: get profile model and fields by role
@@ -12,6 +12,7 @@ function getProfileConfig(role) {
     };
   if (role === 'BANKER')
     return { model: 'bankerProfile', fields: ['bankId', 'branch', 'pincode', 'employeeId'] };
+  if (role === 'ADMIN') return { model: null, fields: [] };
   throw new Error('Invalid role');
 }
 
@@ -34,8 +35,10 @@ exports.getProfile = async (req, res, next) => {
     });
     if (!userData) return res.status(404).json({ success: false, message: 'User not found' });
     // Fetch profile
-    const profile = await prisma[model].findUnique({ where: { userId: user.userId || user.id } });
-    if (!profile) return res.status(404).json({ success: false, message: 'Profile not found' });
+    const profile = model
+      ? await prisma[model].findUnique({ where: { userId: user.userId || user.id } })
+      : {};
+    if (model && !profile) return res.status(404).json({ success: false, message: 'Profile not found' });
     res.json({ success: true, data: { user: userData, profile } });
   } catch (err) {
     next(err);
@@ -52,6 +55,7 @@ exports.updateProfile = async (req, res, next) => {
     if (user.role === 'CUSTOMER') schema = validationSchemas.updateProfileCustomer;
     else if (user.role === 'MERCHANT') schema = validationSchemas.updateProfileMerchant;
     else if (user.role === 'BANKER') schema = validationSchemas.updateProfileBanker;
+    else if (user.role === 'ADMIN') schema = validationSchemas.updateProfileAdmin;
     else return res.status(400).json({ success: false, message: 'Invalid role' });
 
     // Validate input
@@ -75,23 +79,46 @@ exports.updateProfile = async (req, res, next) => {
     }
 
     const { model } = getProfileConfig(user.role);
+    let updatedUser;
+    let updatedProfile;
 
-    // Use transaction to update both
-    const [updatedUser, updatedProfile] = await prisma.$transaction([
-      Object.keys(userUpdateData).length > 0
-        ? prisma.user.update({
-            where: { id: userId },
-            data: userUpdateData,
-            select: { id: true, name: true, email: true, phone: true, role: true, avatar: true },
-          })
-        : prisma.user.findUnique({ where: { id: userId } }),
-      Object.keys(profileUpdateData).length > 0
-        ? prisma[model].update({
-            where: { userId: userId },
-            data: profileUpdateData,
-          })
-        : prisma[model].findUnique({ where: { userId: userId } }),
-    ]);
+    if (!model) {
+      if (Object.keys(profileUpdateData).length > 0) {
+        return res.status(400).json({ success: false, message: 'No valid fields to update' });
+      }
+      updatedUser =
+        Object.keys(userUpdateData).length > 0
+          ? await prisma.user.update({
+              where: { id: userId },
+              data: userUpdateData,
+              select: { id: true, name: true, email: true, phone: true, role: true, avatar: true },
+            })
+          : await prisma.user.findUnique({
+              where: { id: userId },
+              select: { id: true, name: true, email: true, phone: true, role: true, avatar: true },
+            });
+      updatedProfile = {};
+    } else {
+      // Use transaction to update both user and role profile
+      [updatedUser, updatedProfile] = await prisma.$transaction([
+        Object.keys(userUpdateData).length > 0
+          ? prisma.user.update({
+              where: { id: userId },
+              data: userUpdateData,
+              select: { id: true, name: true, email: true, phone: true, role: true, avatar: true },
+            })
+          : prisma.user.findUnique({
+              where: { id: userId },
+              select: { id: true, name: true, email: true, phone: true, role: true, avatar: true },
+            }),
+        Object.keys(profileUpdateData).length > 0
+          ? prisma[model].update({
+              where: { userId: userId },
+              data: profileUpdateData,
+            })
+          : prisma[model].findUnique({ where: { userId: userId } }),
+      ]);
+    }
 
     logger.info('Profile updated', {
       userId,

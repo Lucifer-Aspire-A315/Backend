@@ -3,7 +3,7 @@ const jwtUtil = require('../utils/jwt');
 const { validationSchemas, validate } = require('../utils/validation');
 const { logger } = require('../middleware/logger');
 const twoFactorService = require('../services/twoFactorService');
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 const emailSender = require('../utils/emailSender');
 
 class AuthController {
@@ -440,21 +440,32 @@ class AuthController {
   async disable2fa(req, res, next) {
     try {
       const { token } = req.body; // Require current code to disable for security
-      // We need to fetch the secret to verify the token
-      const user = await userService.findUserByEmail(req.user.email);
-      
-      if (!user.isTwoFactorEnabled) {
-         const error = new Error('2FA is not enabled');
-         error.status = 400;
-         throw error;
+      if (!token) {
+        const error = new Error('Current 2FA code is required');
+        error.status = 400;
+        throw error;
       }
 
-      // Verify code before disabling
-      // Note: In a real app, we should decrypt the secret. Here we assume it's stored as is or handled by service.
-      // Since findUserByEmail doesn't return secret, we might need a specific method or update findUserByEmail.
-      // For now, let's assume we trust the session if they are logged in, OR require password confirmation.
-      // Let's require password for high security actions usually, but for now let's just disable.
-      
+      const user = await userService.findUserByIdWithSecret(req.user.userId);
+      if (!user) {
+        const error = new Error('User not found');
+        error.status = 404;
+        throw error;
+      }
+
+      if (!user.isTwoFactorEnabled) {
+        const error = new Error('2FA is not enabled');
+        error.status = 400;
+        throw error;
+      }
+
+      const isValid = twoFactorService.verifyToken(token, user.twoFactorSecret);
+      if (!isValid) {
+        const error = new Error('Invalid 2FA code');
+        error.status = 401;
+        throw error;
+      }
+
       await twoFactorService.disable(req.user.userId);
       res.json({ success: true, message: '2FA disabled successfully' });
     } catch (error) {

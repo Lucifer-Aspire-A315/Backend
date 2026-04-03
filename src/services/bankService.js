@@ -1,4 +1,4 @@
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 
 exports.createBank = async ({ name, loanTypeIds }) => {
   return prisma.bank.create({
@@ -55,7 +55,16 @@ exports.deleteBank = async (id) => {
 // src/services/bankService.js
 
 exports.getBanks = async ({ loanTypeId }) => {
-  const select = { id: true, name: true };
+  const select = {
+    id: true,
+    name: true,
+    loanTypes: {
+      select: {
+        id: true,
+        name: true,
+      },
+    },
+  };
   if (loanTypeId) {
     // Filter banks that offer the given loan type
     return prisma.bank.findMany({
@@ -72,7 +81,16 @@ exports.getBanks = async ({ loanTypeId }) => {
 };
 
 exports.getLoanTypes = async ({ bankId }) => {
-  const select = { id: true, name: true };
+  const select = {
+    id: true,
+    name: true,
+    banks: {
+      select: {
+        id: true,
+        name: true,
+      },
+    },
+  };
   if (bankId) {
     // Filter loan types offered by the given bank
     return prisma.loanType.findMany({

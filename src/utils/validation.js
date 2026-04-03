@@ -158,6 +158,7 @@ const validationSchemas = {
         'any.only': 'Content type must be one of: image/jpeg, image/png, application/pdf',
         'any.required': 'Content type is required',
       }),
+    secureUrl: Joi.string().uri().optional().allow('', null),
   }),
 
   kycVerify: Joi.object({
@@ -224,6 +225,11 @@ const validationSchemas = {
     avatar: Joi.string().uri().optional().allow(null, ''),
     // bankId is NOT allowed to be updated by the banker themselves
   }),
+
+  updateProfileAdmin: Joi.object({
+    name: Joi.string().trim().min(2).max(100).optional(),
+    avatar: Joi.string().uri().optional().allow(null, ''),
+  }).min(1),
 
   changePassword: Joi.object({
     oldPassword: Joi.string().required(),

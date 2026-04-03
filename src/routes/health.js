@@ -1,5 +1,5 @@
 const express = require('express');
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 const router = express.Router();
 
 // Health check endpoint

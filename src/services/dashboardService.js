@@ -1,4 +1,4 @@
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 const { logger } = require('../middleware/logger');
 
 class DashboardService {
@@ -185,8 +185,10 @@ class DashboardService {
       stats.forEach((s) => {
         byStatus[s.status] = s._count.id;
         totalApps += s._count.id;
-        if (s.status === 'APPROVED') {
+        if (s.status === 'APPROVED' || s.status === 'DISBURSED') {
           approvedApps += s._count.id;
+        }
+        if (s.status === 'DISBURSED') {
           disbursedAmount += Number(s._sum.amount || 0);
         }
       });

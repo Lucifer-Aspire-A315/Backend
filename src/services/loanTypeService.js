@@ -1,4 +1,4 @@
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 const { logger } = require('../middleware/logger');
 const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
@@ -76,6 +76,14 @@ class LoanTypeService {
     try {
       const loanTypes = await prisma.loanType.findMany({
         orderBy: { name: 'asc' },
+        include: {
+          banks: {
+            select: {
+              id: true,
+              name: true,
+            },
+          },
+        },
       });
       return loanTypes;
     } catch (error) {

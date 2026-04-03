@@ -1,4 +1,4 @@
-const prisma = require('../lib/prisma');
+const { prisma } = require('../lib/prisma');
 const bcrypt = require('bcryptjs');
 const { logger } = require('../middleware/logger');
 const { generateToken, getTokenExpiry, hashToken } = require('../utils/emailVerification');
@@ -565,6 +565,8 @@ class UserService {
         where: { id: userId },
         data: { passwordHash },
       });
+
+      await this.revokeAllRefreshTokens(userId);
 
       logger.info('Password changed successfully', { userId });
     } catch (error) {
